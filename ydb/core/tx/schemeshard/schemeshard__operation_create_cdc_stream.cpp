@@ -1103,10 +1103,7 @@ bool TConfigureParts::ProgressState(TOperationContext& context) {
 
     const auto topicPath = streamPath.Child("streamImpl");
     Y_ABORT_UNLESS(topicPath.IsResolved());
-    auto topic = context.SS->Topics.at(topicPath.Base()->PathId);
-    if (topic->AlterData) {
-        topic = topic->AlterData;
-    }
+    const auto topic = context.SS->Topics.at(topicPath.Base()->PathId);
     for (const auto& [shardIdx, shard] : topic->Shards) {
         const auto tabletId = waitForShard(shardIdx);
         for (const auto& partition : shard->Partitions) {
