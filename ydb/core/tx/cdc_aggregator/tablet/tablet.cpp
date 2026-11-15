@@ -19,10 +19,12 @@ TCdcAggregator::TCdcAggregator(const TActorId& tablet, TTabletStorageInfo* info)
 }
 
 void TCdcAggregator::OnDetach(const TActorContext& ctx) {
+    ClosePublicationPipes(ctx);
     Die(ctx);
 }
 
 void TCdcAggregator::OnTabletDead(TEvTablet::TEvTabletDead::TPtr&, const TActorContext& ctx) {
+    ClosePublicationPipes(ctx);
     Die(ctx);
 }
 
@@ -44,6 +46,10 @@ STFUNC(TCdcAggregator::StateWork) {
         HFunc(TEvCdcAggregator::TEvWriteHeartbeats, Handle);
         HFunc(TEvCdcAggregator::TEvPartitioningChanged, Handle);
         HFunc(TEvCdcAggregator::TEvDescribeTracking, Handle);
+        HFunc(TEvPersQueue::TEvResponse, Handle);
+        HFunc(TEvTabletPipe::TEvClientConnected, Handle);
+        HFunc(TEvTabletPipe::TEvClientDestroyed, Handle);
+        HFunc(TEvents::TEvWakeup, Handle);
         IgnoreFunc(TEvTabletPipe::TEvServerConnected);
         IgnoreFunc(TEvTabletPipe::TEvServerDisconnected);
     default:
@@ -57,38 +63,60 @@ STFUNC(TCdcAggregator::StateWork) {
 void TCdcAggregator::SwitchToWork(const TActorContext& ctx) {
     SignalTabletActive(ctx);
     Become(&TThis::StateWork);
+    CommittedHeartbeat = Stream.GetCurrentHeartbeat();
+    PublishHeartbeat(ctx);
 }
 
 void TCdcAggregator::PersistStreamChanges(NIceDb::TNiceDb& db, const TStreamChanges& changes) {
     for (const auto dataShardId : changes.ErasedSources) {
         db.Table<Schema::Sources>().Key(dataShardId).Delete();
     }
-
-    for (const auto dataShardId : changes.AddedSources) {
-        db.Table<Schema::Sources>().Key(dataShardId).Update();
+    for (const auto dataShardId : changes.UpsertedSources) {
+        const auto& version = Stream.GetSources().at(dataShardId);
+        if (version) {
+            db.Table<Schema::Sources>().Key(dataShardId).Update(
+                NIceDb::TUpdate<Schema::Sources::LastHeartbeatStep>(version->Step),
+                NIceDb::TUpdate<Schema::Sources::LastHeartbeatTxId>(version->TxId));
+        } else {
+            db.Table<Schema::Sources>().Key(dataShardId).Update();
+        }
     }
-}
-
-void TCdcAggregator::Handle(TEvCdcAggregator::TEvWriteHeartbeats::TPtr& ev, const TActorContext& ctx) {
-    YDB_LOG_TRACE("Handle",
-        {"ev", ev->Get()->ToString()});
-
-    auto result = MakeHolder<TEvCdcAggregator::TEvWriteHeartbeatsResult>();
-    result->Record.SetStatus(NKikimrCdcAggregator::TEvWriteHeartbeatsResult::NOT_READY);
-    result->Record.SetOrigin(TabletID());
-    ctx.Send(ev->Sender, result.Release(), 0, ev->Cookie);
+    for (const auto& version : changes.ErasedHeartbeats) {
+        db.Table<Schema::Heartbeats>().Key(version.Step, version.TxId).Delete();
+    }
+    for (const auto& [version, data] : changes.UpsertedHeartbeats) {
+        db.Table<Schema::Heartbeats>().Key(version.Step, version.TxId).Update(
+            NIceDb::TUpdate<Schema::Heartbeats::Data>(data));
+    }
+    if (changes.CurrentHeartbeatChanged) {
+        const auto& heartbeat = *Stream.GetCurrentHeartbeat();
+        db.Table<Schema::State>().Key(Schema::State::Id::Value).Update(
+            NIceDb::TUpdate<Schema::State::CurrentHeartbeatStep>(heartbeat.Version.Step),
+            NIceDb::TUpdate<Schema::State::CurrentHeartbeatTxId>(heartbeat.Version.TxId),
+            NIceDb::TUpdate<Schema::State::CurrentHeartbeatData>(heartbeat.Data));
+    }
 }
 
 void TCdcAggregator::Handle(TEvCdcAggregator::TEvDescribeTracking::TPtr& ev, const TActorContext& ctx) {
     YDB_LOG_TRACE("Handle",
         {"ev", ev->Get()->ToString()});
 
-    TVector<ui64> sources(Stream.GetSources().begin(), Stream.GetSources().end());
+    TVector<ui64> sources;
+    for (const auto& [dataShardId, heartbeat] : Stream.GetSources()) {
+        sources.push_back(dataShardId);
+    }
     std::sort(sources.begin(), sources.end());
 
     auto result = MakeHolder<TEvCdcAggregator::TEvDescribeTrackingResult>();
+    if (CommittedHeartbeat) {
+        CommittedHeartbeat->Version.ToProto(result->Record.MutableCurrentHeartbeat());
+    }
     for (const auto dataShardId : sources) {
-        result->Record.AddSources()->SetDataShardId(dataShardId);
+        auto& item = *result->Record.AddSources();
+        item.SetDataShardId(dataShardId);
+        if (const auto& heartbeat = Stream.GetSources().at(dataShardId)) {
+            heartbeat->ToProto(item.MutableLastHeartbeat());
+        }
     }
     ctx.Send(ev->Sender, result.Release(), 0, ev->Cookie);
 }

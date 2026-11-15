@@ -870,4 +870,6 @@ enum ETxTypes {
     TXTYPE_UPDATE_STORAGE_SPACE_STATE = 130               [(TxTypeOpts) = {Name: "TxUpdateStorageSpaceState"}];
 
     TXTYPE_REVISIT_SPLIT_MERGE = 131                       [(TxTypeOpts) = {Name: "TxRevisitSplitMerge"}];
+    TXTYPE_CDC_AGGREGATOR_CONFIGURE_RESULT = 132 [(TxTypeOpts) = {Name: "TxCdcAggregatorConfigureResult"}];
+
 }

@@ -179,7 +179,7 @@ Y_UNIT_TEST_SUITE(TCdcAggregatorTabletTest) {
         UNIT_ASSERT_VALUES_EQUAL(env.DescribeSources(), TVector<ui64>({1, 2}));
 
         const auto writeResult = env.WriteHeartbeats({{1, 100}});
-        UNIT_ASSERT_C(writeResult.GetStatus() == TWriteResult::NOT_READY, writeResult.ShortDebugString());
+        UNIT_ASSERT_C(writeResult.GetStatus() == TWriteResult::SUCCESS, writeResult.ShortDebugString());
     }
 
     Y_UNIT_TEST(ReturnsConflictWhenConfigDiffers) {
@@ -263,6 +263,53 @@ Y_UNIT_TEST_SUITE(TCdcAggregatorTabletTest) {
         const auto otherResult = env.ConfigureTracking({1, 3});
         UNIT_ASSERT_C(otherResult.GetStatus() == TConfigureResult::CONFLICT, otherResult.ShortDebugString());
     }
+
+    Y_UNIT_TEST(PersistsHeartbeatsAndRestoresMinimum) {
+        TTestEnv env;
+        env.ConfigureTracking({1, 2});
+        const auto first = env.WriteHeartbeats({{1, 100}});
+        UNIT_ASSERT_C(first.GetStatus() == TWriteResult::SUCCESS, first.ShortDebugString());
+        UNIT_ASSERT_VALUES_EQUAL(first.GetResults(0).GetWrittenVersion().GetStep(), 100);
+        UNIT_ASSERT(!env.DescribeTracking().HasCurrentHeartbeat());
+
+        env.WriteHeartbeats({{2, 110}});
+        UNIT_ASSERT_VALUES_EQUAL(env.DescribeTracking().GetCurrentHeartbeat().GetStep(), 100);
+        env.RebootTablet();
+        const auto restored = env.DescribeTracking();
+        UNIT_ASSERT_VALUES_EQUAL(restored.GetCurrentHeartbeat().GetStep(), 100);
+        UNIT_ASSERT_VALUES_EQUAL(restored.GetSources(0).GetLastHeartbeat().GetStep(), 100);
+        UNIT_ASSERT_VALUES_EQUAL(restored.GetSources(1).GetLastHeartbeat().GetStep(), 110);
+
+        env.WriteHeartbeats({{1, 120}});
+        UNIT_ASSERT_VALUES_EQUAL(env.DescribeTracking().GetCurrentHeartbeat().GetStep(), 110);
+        const auto stale = env.WriteHeartbeats({{2, 70}});
+        UNIT_ASSERT_VALUES_EQUAL(stale.GetResults(0).GetWrittenVersion().GetStep(), 110);
+        UNIT_ASSERT_VALUES_EQUAL(env.DescribeTracking().GetCurrentHeartbeat().GetStep(), 110);
+    }
+
+    Y_UNIT_TEST(RejectsUnknownAndMalformedHeartbeatsWithoutAdvancingMinimum) {
+        TTestEnv env;
+        env.ConfigureTracking({1, 2});
+        const auto written = env.WriteHeartbeats({{1, 100}, {9, 200}});
+        UNIT_ASSERT_C(written.GetStatus() == TWriteResult::SUCCESS, written.ShortDebugString());
+        UNIT_ASSERT_C(written.GetResults(0).GetStatus() == TWriteResult::THeartbeatResult::SUCCESS, written.ShortDebugString());
+        UNIT_ASSERT_C(written.GetResults(1).GetStatus() == TWriteResult::THeartbeatResult::UNKNOWN_SOURCE, written.ShortDebugString());
+        UNIT_ASSERT(!env.DescribeTracking().HasCurrentHeartbeat());
+
+        auto request = MakeHolder<TEvCdcAggregator::TEvWriteHeartbeats>();
+        auto& heartbeat = *request->Record.AddHeartbeats();
+        heartbeat.SetSourceDataShardId(2);
+        heartbeat.MutableHeartbeat()->SetStep(100);
+        env.SendRequest(std::move(request));
+        const auto malformed = env.GrabResult<TEvCdcAggregator::TEvWriteHeartbeatsResult>();
+        UNIT_ASSERT_C(malformed->Get()->Record.GetResults(0).GetStatus() == TWriteResult::THeartbeatResult::BAD_REQUEST,
+            malformed->Get()->Record.ShortDebugString());
+        UNIT_ASSERT(!env.DescribeTracking().HasCurrentHeartbeat());
+
+        env.WriteHeartbeats({{2, 100}});
+        UNIT_ASSERT_VALUES_EQUAL(env.DescribeTracking().GetCurrentHeartbeat().GetStep(), 100);
+    }
+
 }
 
 } // namespace NKikimr::NCdcAggregator

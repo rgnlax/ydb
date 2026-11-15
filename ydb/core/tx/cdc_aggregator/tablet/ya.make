@@ -3,6 +3,8 @@ LIBRARY()
 SRCS(
     stream.cpp
     tablet.cpp
+    publish_heartbeats.cpp
+    tx_write_heartbeats.cpp
     tx_configure_tracking.cpp
     tx_init.cpp
     tx_init_schema.cpp
@@ -11,6 +13,7 @@ SRCS(
 
 PEERDIR(
     ydb/core/base
+    ydb/core/persqueue/events
     ydb/core/engine/minikql
     ydb/core/protos
     ydb/core/scheme

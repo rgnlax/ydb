@@ -6163,6 +6163,7 @@ void TSchemeShard::StateWork(STFUNC_SIG) {
 
         // replication
         HFuncTraced(NReplication::TEvController::TEvCreateReplicationResult, Handle);
+        HFuncTraced(NCdcAggregator::TEvCdcAggregator::TEvConfigureTrackingResult, Handle);
         HFuncTraced(NReplication::TEvController::TEvAlterReplicationResult, Handle);
         HFuncTraced(NReplication::TEvController::TEvDropReplicationResult, Handle);
 
@@ -7678,6 +7679,24 @@ void TSchemeShard::Handle(NSequenceShard::TEvSequenceShard::TEvGetSequenceResult
     TTxId txId = TTxId(ev->Get()->Record.GetTxId());
     TSubTxId partId = TSubTxId(ev->Get()->Record.GetTxPartId());
     Execute(CreateTxOperationReply(TOperationId(txId, partId), ev), ctx);
+}
+
+void TSchemeShard::Handle(NCdcAggregator::TEvCdcAggregator::TEvConfigureTrackingResult::TPtr& ev,
+        const TActorContext& ctx) {
+    const auto tabletId = TTabletId(ev->Get()->Record.GetOrigin());
+    const auto shardIdx = GetShardIdx(tabletId);
+    if (shardIdx == InvalidShardIdx) {
+        return;
+    }
+    const auto txId = ShardInfos.at(shardIdx).CurrentTxId;
+    const auto operation = Operations.find(txId);
+    if (operation == Operations.end()) {
+        return;
+    }
+    const auto partId = operation->second->FindRelatedPartByTabletId(tabletId, ctx);
+    if (partId != InvalidSubTxId) {
+        Execute(CreateTxOperationReply(TOperationId(txId, partId), ev), ctx);
+    }
 }
 
 void TSchemeShard::Handle(NReplication::TEvController::TEvCreateReplicationResult::TPtr &ev, const TActorContext &ctx) {

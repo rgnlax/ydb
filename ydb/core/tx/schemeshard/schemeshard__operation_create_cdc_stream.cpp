@@ -1068,14 +1068,72 @@ TConfigureParts::TConfigureParts(TOperationId id)
 }
 
 bool TConfigureParts::ProgressState(TOperationContext& context) {
-    YDB_LOG_INFO_CTX(context.Ctx, "");
-
-    const auto* txState = context.SS->FindTx(OperationId);
+    auto* txState = context.SS->FindTx(OperationId);
     Y_ABORT_UNLESS(txState);
     Y_ABORT_UNLESS(txState->TxType == TTxState::TxCreateCdcStream || txState->TxType == TTxState::TxRotateCdcStream);
 
+    const auto streamPath = TPath::Init(txState->TargetPathId, context.SS);
+    const auto stream = context.SS->CdcStreams.at(txState->TargetPathId)->AlterData;
+    Y_ABORT_UNLESS(stream);
+    if (stream->HeartbeatMode != NKikimrSchemeOp::ECdcStreamHeartbeatModeAggregated) {
+        NIceDb::TNiceDb db(context.GetDB());
+        context.SS->ChangeTxState(db, OperationId, TTxState::Propose);
+        return true;
+    }
+
+    auto request = MakeHolder<NCdcAggregator::TEvCdcAggregator::TEvConfigureTracking>();
+    auto& config = *request->Record.MutableConfig();
+    txState->TargetPathId.ToProto(config.MutableStreamPathId());
+    config.SetStreamPath(streamPath.PathString());
+
+    bool waiting = false;
+    const auto waitForShard = [&](const TShardIdx& shardIdx) {
+        const auto tabletId = context.SS->ShardInfos.at(shardIdx).TabletID;
+        if (tabletId == InvalidTabletId) {
+            context.OnComplete.WaitShardCreated(shardIdx, OperationId);
+            waiting = true;
+        }
+        return ui64(tabletId);
+    };
+
+    const auto table = context.SS->Tables.at(streamPath.Parent().Base()->PathId);
+    for (const auto* partition : table->GetPartitions()) {
+        config.AddSourceDataShardIds(waitForShard(partition->ShardIdx));
+    }
+
+    const auto topicPath = streamPath.Child("streamImpl");
+    Y_ABORT_UNLESS(topicPath.IsResolved());
+    const auto topic = context.SS->Topics.at(topicPath.Base()->PathId);
+    for (const auto& [shardIdx, shard] : topic->Shards) {
+        const auto tabletId = waitForShard(shardIdx);
+        for (const auto& partition : shard->Partitions) {
+            auto& target = *config.AddTargetPartitions();
+            target.SetPartitionId(partition->PqId);
+            target.SetTabletId(tabletId);
+        }
+    }
+
+    const auto aggregatorId = waitForShard(stream->AggregatorShardIdx);
+    if (waiting) {
+        return false;
+    }
+
+    context.OnComplete.BindMsgToPipe(OperationId, TTabletId(aggregatorId), txState->TargetPathId, request.Release());
+    return false;
+}
+
+bool TConfigureParts::HandleReply(NCdcAggregator::TEvCdcAggregator::TEvConfigureTrackingResult::TPtr& ev,
+        TOperationContext& context) {
+    const auto& result = ev->Get()->Record;
+    Y_ABORT_UNLESS(result.GetStatus() == NKikimrCdcAggregator::TEvConfigureTrackingResult::SUCCESS,
+        "CdcAggregator configuration failed: %s", result.ShortDebugString().c_str());
+
+    auto* txState = context.SS->FindTx(OperationId);
+    Y_ABORT_UNLESS(txState);
+    context.OnComplete.UnbindMsgFromPipe(OperationId, TTabletId(result.GetOrigin()), txState->TargetPathId);
     NIceDb::TNiceDb db(context.GetDB());
     context.SS->ChangeTxState(db, OperationId, TTxState::Propose);
+    context.OnComplete.ActivateTx(OperationId);
     return true;
 }
 
