@@ -13,6 +13,7 @@ class TCdcAggregator::TTxPartitioningChanged : public TTxBase {
 
     TEvCdcAggregator::TEvPartitioningChanged::TPtr Ev;
     THolder<TEvCdcAggregator::TEvPartitioningChangedAck> Result;
+    std::optional<NPQ::THeartbeat> CommittedHeartbeat;
 
     static bool IsValidPartitioningChange(ui64 parentDataShardId, const TVector<ui64>& childDataShardIds) {
         return parentDataShardId
@@ -66,6 +67,9 @@ public:
 
         NIceDb::TNiceDb db(txc.DB);
         Self->PersistStreamChanges(db, changes);
+        if (changes.CurrentHeartbeatChanged) {
+            CommittedHeartbeat = Self->Stream.GetCurrentHeartbeat();
+        }
 
         return true;
     }
@@ -76,6 +80,9 @@ public:
             {"result", Result->ToString()});
 
         ctx.Send(Ev->Sender, Result.Release(), 0, Ev->Cookie);
+        if (CommittedHeartbeat) {
+            Self->CommitHeartbeat(*CommittedHeartbeat, ctx);
+        }
     }
 };
 

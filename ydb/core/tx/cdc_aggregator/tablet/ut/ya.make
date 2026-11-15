@@ -6,6 +6,7 @@ PEERDIR(
 
 SRCS(
     tablet_ut.cpp
+    stream_ut.cpp
 )
 
 YQL_LAST_ABI_VERSION()

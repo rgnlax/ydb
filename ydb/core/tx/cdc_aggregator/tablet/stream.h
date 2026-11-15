@@ -1,9 +1,13 @@
 #pragma once
 
+#include <ydb/core/persqueue/common/heartbeat.h>
 #include <ydb/core/protos/cdc_aggregator.pb.h>
 #include <ydb/core/scheme/scheme_pathid.h>
 
+#include <util/generic/hash.h>
 #include <util/generic/hash_set.h>
+#include <util/generic/map.h>
+#include <util/generic/set.h>
 #include <util/generic/vector.h>
 
 #include <optional>
@@ -30,8 +34,13 @@ bool ParseTrackingConfig(const NKikimrCdcAggregator::TTrackingConfig& proto, TTr
 
 struct TStreamChanges {
     bool ConfigChanged = false;
-    THashSet<ui64> AddedSources;
+    THashSet<ui64> UpsertedSources;
     THashSet<ui64> ErasedSources;
+    TMap<TRowVersion, TString> UpsertedHeartbeats;
+    TSet<TRowVersion> ErasedHeartbeats;
+    bool CurrentHeartbeatChanged = false;
+
+    bool IsEmpty() const;
 };
 
 enum class EConfigureOutcome {
@@ -46,7 +55,11 @@ enum class ESourceOutcome {
 
 class TStream {
 public:
-    static TStream Restore(TTrackingConfig config, THashSet<ui64> sources);
+    static TStream Restore(
+        TTrackingConfig config,
+        THashMap<ui64, std::optional<TRowVersion>> sources,
+        const TMap<TRowVersion, TString>& heartbeats,
+        std::optional<NPQ::THeartbeat> currentHeartbeat);
 
     bool IsConfigured() const {
         return Config.has_value();
@@ -54,16 +67,36 @@ public:
 
     const TTrackingConfig& GetConfig() const;
 
-    const THashSet<ui64>& GetSources() const {
+    const THashMap<ui64, std::optional<TRowVersion>>& GetSources() const {
         return Sources;
     }
 
+    const std::optional<NPQ::THeartbeat>& GetCurrentHeartbeat() const {
+        return CurrentHeartbeat;
+    }
+
     EConfigureOutcome Configure(const TTrackingConfig& config, TStreamChanges& changes);
+    ESourceOutcome WriteHeartbeat(ui64 sourceDataShardId, const NPQ::THeartbeat& heartbeat, TStreamChanges& changes);
     ESourceOutcome ChangePartitioning(ui64 parentDataShardId, const TVector<ui64>& childDataShardIds, TStreamChanges& changes);
 
 private:
+    void AddSource(ui64 sourceDataShardId, TStreamChanges& changes);
+    void EraseSource(ui64 sourceDataShardId, TStreamChanges& changes);
+    void HoldHeartbeat(const NPQ::THeartbeat& heartbeat, TStreamChanges& changes);
+    void ReleaseHeartbeat(const TRowVersion& version, TStreamChanges& changes);
+    void AdvanceCurrentHeartbeat(TStreamChanges& changes);
+
+private:
+    struct THeldHeartbeat {
+        TString Data;
+        ui64 SourceCount = 0;
+    };
+
     std::optional<TTrackingConfig> Config;
-    THashSet<ui64> Sources;
+    THashMap<ui64, std::optional<TRowVersion>> Sources;
+    ui64 SourcesWithHeartbeat = 0;
+    TMap<TRowVersion, THeldHeartbeat> Heartbeats;
+    std::optional<NPQ::THeartbeat> CurrentHeartbeat;
 };
 
-} // namespace NKikimr::NCdcAggregator
+}

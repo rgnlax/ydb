@@ -25,6 +25,8 @@
 #include "schemeshard__root_shred_manager.h"
 #include "schemeshard__tenant_shred_manager.h"
 
+#include <ydb/core/tx/cdc_aggregator/public/events.h>
+
 #include <ydb/core/base/channel_profiles.h>
 #include <ydb/core/base/hive.h>
 #include <ydb/core/base/storage_pools.h>
@@ -1598,6 +1600,7 @@ public:
     void Handle(NSequenceShard::TEvSequenceShard::TEvRedirectSequenceResult::TPtr &ev, const TActorContext &ctx);
     void Handle(NSequenceShard::TEvSequenceShard::TEvGetSequenceResult::TPtr &ev, const TActorContext &ctx);
     void Handle(NReplication::TEvController::TEvCreateReplicationResult::TPtr &ev, const TActorContext &ctx);
+    void Handle(NCdcAggregator::TEvCdcAggregator::TEvConfigureTrackingResult::TPtr& ev, const TActorContext& ctx);
     void Handle(NReplication::TEvController::TEvAlterReplicationResult::TPtr &ev, const TActorContext &ctx);
     void Handle(NReplication::TEvController::TEvDropReplicationResult::TPtr &ev, const TActorContext &ctx);
     void Handle(TEvDataShard::TEvProposeTransactionResult::TPtr &ev, const TActorContext &ctx);
