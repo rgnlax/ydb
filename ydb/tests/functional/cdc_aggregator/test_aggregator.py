@@ -100,7 +100,8 @@ def prepare_stream(cluster, driver, mode, source_count, partition_count, interva
     assert len([partition for partition in partitions if partition.active]) == partition_count
     row_type = ydb.BulkUpsertColumns().add_column("id", ydb.PrimitiveType.Uint64)
     row_type.add_column("value", ydb.PrimitiveType.Utf8)
-    rows = [{"id": (2**64 // source_count) * index, "value": "seed"} for index in range(source_count)]
+    rows = [{"id": ((2 * index + 1) * 2**64) // (2 * source_count), "value": "seed"}
+            for index in range(source_count)]
     driver.table_client.bulk_upsert("/Root/source", rows, column_types=row_type)
     return path
 
