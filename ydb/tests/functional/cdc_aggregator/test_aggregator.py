@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from ydb.core.protos import flat_scheme_op_pb2, msgbus_pb2
+from ydb.core.protos import flat_scheme_op_pb2, flat_tx_scheme_pb2, msgbus_pb2
 from ydb.tests.library.common.types import Erasure
 from ydb.tests.library.harness import daemon
 from ydb.tests.library.harness.kikimr_config import KikimrConfigGenerator
@@ -85,7 +85,11 @@ def prepare_stream(cluster, driver, mode, source_count, partition_count, interva
         )
         assert len(description.shard_key_ranges) == source_count
 
-    response = cluster.client.send(msgbus_pb2.TSchemeDescribe(Path="/Root/source/updates"), "SchemeDescribe")
+    request = msgbus_pb2.TSchemeDescribe(Path="/Root/source/updates")
+    request.Options.ShowPrivateTable = True
+    response = cluster.client.send(request, "SchemeDescribe")
+    assert response.SchemeStatus == flat_tx_scheme_pb2.StatusSuccess, response
+    assert response.PathDescription.HasField("CdcStreamDescription"), response
     stream = response.PathDescription.CdcStreamDescription
     expected = (
         flat_scheme_op_pb2.ECdcStreamHeartbeatModeAggregated if mode == "aggregated"
