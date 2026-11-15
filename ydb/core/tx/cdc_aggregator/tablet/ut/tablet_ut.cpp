@@ -268,7 +268,7 @@ Y_UNIT_TEST_SUITE(TCdcAggregatorTabletTest) {
         TTestEnv env;
         env.ConfigureTracking({1, 2});
         const auto first = env.WriteHeartbeats({{1, 100}});
-        UNIT_ASSERT_VALUES_EQUAL(first.GetStatus(), TWriteResult::SUCCESS);
+        UNIT_ASSERT_C(first.GetStatus() == TWriteResult::SUCCESS, first.ShortDebugString());
         UNIT_ASSERT_VALUES_EQUAL(first.GetResults(0).GetWrittenVersion().GetStep(), 100);
         UNIT_ASSERT(!env.DescribeTracking().HasCurrentHeartbeat());
 
@@ -291,9 +291,9 @@ Y_UNIT_TEST_SUITE(TCdcAggregatorTabletTest) {
         TTestEnv env;
         env.ConfigureTracking({1, 2});
         const auto written = env.WriteHeartbeats({{1, 100}, {9, 200}});
-        UNIT_ASSERT_VALUES_EQUAL(written.GetStatus(), TWriteResult::SUCCESS);
-        UNIT_ASSERT_VALUES_EQUAL(written.GetResults(0).GetStatus(), TWriteResult::THeartbeatResult::SUCCESS);
-        UNIT_ASSERT_VALUES_EQUAL(written.GetResults(1).GetStatus(), TWriteResult::THeartbeatResult::UNKNOWN_SOURCE);
+        UNIT_ASSERT_C(written.GetStatus() == TWriteResult::SUCCESS, written.ShortDebugString());
+        UNIT_ASSERT_C(written.GetResults(0).GetStatus() == TWriteResult::THeartbeatResult::SUCCESS, written.ShortDebugString());
+        UNIT_ASSERT_C(written.GetResults(1).GetStatus() == TWriteResult::THeartbeatResult::UNKNOWN_SOURCE, written.ShortDebugString());
         UNIT_ASSERT(!env.DescribeTracking().HasCurrentHeartbeat());
 
         auto request = MakeHolder<TEvCdcAggregator::TEvWriteHeartbeats>();
@@ -302,7 +302,8 @@ Y_UNIT_TEST_SUITE(TCdcAggregatorTabletTest) {
         heartbeat.MutableHeartbeat()->SetStep(100);
         env.SendRequest(std::move(request));
         const auto malformed = env.GrabResult<TEvCdcAggregator::TEvWriteHeartbeatsResult>();
-        UNIT_ASSERT_VALUES_EQUAL(malformed->Get()->Record.GetResults(0).GetStatus(), TWriteResult::THeartbeatResult::BAD_REQUEST);
+        UNIT_ASSERT_C(malformed->Get()->Record.GetResults(0).GetStatus() == TWriteResult::THeartbeatResult::BAD_REQUEST,
+            malformed->Get()->Record.ShortDebugString());
         UNIT_ASSERT(!env.DescribeTracking().HasCurrentHeartbeat());
 
         env.WriteHeartbeats({{2, 100}});
