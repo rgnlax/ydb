@@ -871,4 +871,7 @@ enum ETxTypes {
 
     TXTYPE_REVISIT_SPLIT_MERGE = 131                       [(TxTypeOpts) = {Name: "TxRevisitSplitMerge"}];
     TXTYPE_DATABASE_FREEZE = 132                         [(TxTypeOpts) = {Name: "TxDatabaseFreeze"}];
+
+    TXTYPE_CDC_AGGREGATOR_CONFIGURE_TRACKING_RESULT = 133  [(TxTypeOpts) = {Name: "TxCdcAggregatorConfigureTrackingResult"}];
+    TXTYPE_CDC_AGGREGATOR_PARTITIONING_CHANGED_ACK = 134   [(TxTypeOpts) = {Name: "TxCdcAggregatorPartitioningChangedAck"}];
 }
