@@ -412,7 +412,7 @@ Y_UNIT_TEST_SUITE(ServiceCredentials) {
 }
 
 Y_UNIT_TEST_SUITE(ServiceGlobalTxIds) {
-    Y_UNIT_TEST_TWIN(RemovesStoppedWorkerFromHeartbeatAndTxIdWaiters, ReaderFailure) {
+    void CheckRetiredGlobalWorker(bool readerFailure) {
         TServiceWorkerEnv env;
         auto& runtime = env.Runtime;
         THashMap<TActorId, TActorId> owners;
@@ -469,7 +469,7 @@ Y_UNIT_TEST_SUITE(ServiceGlobalTxIds) {
         request(fast, 91);
         expectRequest(91);
 
-        env.Stop(1, ReaderFailure ? slow : TActorId{});
+        env.Stop(1, readerFailure ? slow : TActorId{});
         heartbeat(fast, 50);
         send(env.Edge, new TEvService::TEvHandshake(42, 1));
         UNIT_ASSERT(runtime.GrabEdgeEvent<TEvService::TEvStatus>(env.Edge, TDuration::Seconds(5)));
@@ -482,6 +482,14 @@ Y_UNIT_TEST_SUITE(ServiceGlobalTxIds) {
         expectRequest(71);
         UNIT_ASSERT_VALUES_EQUAL(forwarded, 1);
         env.Finish();
+    }
+
+    Y_UNIT_TEST(RemovesStoppedWorkerFromHeartbeatAndTxIdWaiters) {
+        CheckRetiredGlobalWorker(false);
+    }
+
+    Y_UNIT_TEST(RemovesFailedWorkerFromHeartbeatAndTxIdWaiters) {
+        CheckRetiredGlobalWorker(true);
     }
 }
 

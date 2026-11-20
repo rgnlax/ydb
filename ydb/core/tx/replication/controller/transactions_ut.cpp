@@ -273,7 +273,7 @@ Y_UNIT_TEST_SUITE(ReplicationTransactions) {
         UNIT_ASSERT_VALUES_EQUAL(env.SdkTransactions(true).value().Assigned.size(), 0);
     }
 
-    Y_UNIT_TEST_TWIN(KeepsCoalescedAssignmentsAfterAnEarlierCommit, Reboot) {
+    void CheckCoalescedAssignmentsAfterAnEarlierCommit(bool reboot) {
         TTransactionsEnv env;
         const auto first = env.Assign(1);
         const auto middle = env.Assign(29999);
@@ -289,13 +289,21 @@ Y_UNIT_TEST_SUITE(ReplicationTransactions) {
         UNIT_ASSERT(env.GetRuntime().GrabEdgeEvent<TEvents::TEvWakeup>(env.GetSender(), TDuration::Seconds(30)));
         env.CommitStatus(first, TEvTxUserProxy::TEvProposeTransactionStatus::EStatus::ExecComplete);
         UNIT_ASSERT_VALUES_EQUAL(env.Count(), 4);
-        if (Reboot) {
+        if (reboot) {
             env.SendAsync(env.TabletId, new TEvents::TEvPoisonPill());
             env.Handshake();
         }
         UNIT_ASSERT_VALUES_EQUAL(env.Assign(59999), last);
         UNIT_ASSERT_VALUES_EQUAL(env.Assign(19999), middle);
         UNIT_ASSERT_VALUES_EQUAL(env.Count(), 4);
+    }
+
+    Y_UNIT_TEST(KeepsCoalescedAssignmentsAfterAnEarlierCommit) {
+        CheckCoalescedAssignmentsAfterAnEarlierCommit(false);
+    }
+
+    Y_UNIT_TEST(RestoresCoalescedAssignmentsAfterAnEarlierCommit) {
+        CheckCoalescedAssignmentsAfterAnEarlierCommit(true);
     }
 
     Y_UNIT_TEST(RestoresAssignedTransactionsAfterRestart) {
