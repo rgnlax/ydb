@@ -179,6 +179,22 @@ Y_UNIT_TEST_SUITE(TExplicitMessageGroupsTest) {
         UNIT_ASSERT_VALUES_EQUAL(groups->at("ds1").SeqNo, 5);
     }
 
+    Y_UNIT_TEST(ShouldInheritParentGroupsOnlyWhenCreatingTheChild) {
+        auto config = MakeSplitTabletConfig();
+        auto& child = *config.MutablePartitions(2);
+        UNIT_ASSERT_VALUES_EQUAL(child.GetPartitionId(), 2);
+        child.SetCreateVersion(2);
+        config.SetVersion(2);
+        const auto data = MakeParentPartitionsData();
+        const auto graph = MakePartitionGraph(config);
+        UNIT_ASSERT_VALUES_EQUAL(GetGroupIds(CreateExplicitMessageGroups({}, data, config, graph, 2)), "ds2");
+
+        // After a DataShard merge the child can have deregistered ds2.
+        // The inactive parent still reports ds2 on the next topic config transaction.
+        config.SetVersion(3);
+        UNIT_ASSERT(CreateExplicitMessageGroups({}, data, config, graph, 2)->empty());
+    }
+
     Y_UNIT_TEST(ShouldRegisterAllGroupsWhenTopicHasNoKeySchema) {
         // given
         const auto tabletConfig = MakeTabletConfig(false);

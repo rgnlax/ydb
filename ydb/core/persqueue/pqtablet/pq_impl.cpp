@@ -95,14 +95,8 @@ struct TPartitionKeyRangeFilter {
     TPartitionKeyRange PartitionKeyRange;
 };
 
-std::optional<TPartitionKeyRangeFilter> MakePartitionKeyRangeFilter(const NKikimrPQ::TPQTabletConfig& tabletConfig, ui32 partitionId) {
-    if (!tabletConfig.PartitionKeySchemaSize()) {
-        return std::nullopt;
-    }
-
-    const auto* partition = FindIfPtr(tabletConfig.GetPartitions(), [&](const auto& p) {
-        return p.GetPartitionId() == partitionId;
-    });
+std::optional<TPartitionKeyRangeFilter> MakePartitionKeyRangeFilter(const NKikimrPQ::TPQTabletConfig& tabletConfig,
+                                                                   const NKikimrPQ::TPQTabletConfig::TPartition* partition) {
     if (!partition) {
         return std::nullopt;
     }
@@ -120,7 +114,8 @@ std::optional<TPartitionKeyRangeFilter> MakePartitionKeyRangeFilter(const NKikim
 TEvPQ::TMessageGroupsPtr CreateExplicitMessageGroups(const NKikimrPQ::TBootstrapConfig& bootstrapCfg, const NKikimrPQ::TPartitions& partitionsData, const NKikimrPQ::TPQTabletConfig& tabletConfig, const TPartitionGraph& graph, ui32 partitionId) {
     TEvPQ::TMessageGroupsPtr explicitMessageGroups = std::make_shared<TEvPQ::TMessageGroups>();
 
-    const auto keyRangeFilter = MakePartitionKeyRangeFilter(tabletConfig, partitionId);
+    const auto* partition = tabletConfig.PartitionKeySchemaSize() ? GetPartitionConfig(tabletConfig, partitionId) : nullptr;
+    const auto keyRangeFilter = MakePartitionKeyRangeFilter(tabletConfig, partition);
     auto intersectsPartition = [&](const TPartitionKeyRange& keyRange) {
         return !keyRangeFilter || Intersects(keyRange, keyRangeFilter->PartitionKeyRange, keyRangeFilter->KeyTypes);
     };
@@ -135,6 +130,12 @@ TEvPQ::TMessageGroupsPtr CreateExplicitMessageGroups(const NKikimrPQ::TBootstrap
         }
 
         (*explicitMessageGroups)[mg.GetId()] = {0, std::move(keyRange)};
+    }
+
+    // A child inherits its parents' groups at creation. Later config changes must
+    // preserve subsequent DataShard deregistrations in that child.
+    if (partition && partition->GetCreateVersion() && partition->GetCreateVersion() < tabletConfig.GetVersion()) {
+        return explicitMessageGroups;
     }
 
     if (graph) {
