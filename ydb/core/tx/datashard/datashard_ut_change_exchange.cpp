@@ -4224,10 +4224,10 @@ Y_UNIT_TEST_SUITE(Cdc) {
         return streamDesc;
     }
 
-    bool HasResolvedAfterUpdate(const TVector<std::pair<TString, TString>>& records) {
+    bool HasResolvedAfterUpdate(const TVector<std::pair<TString, TString>>& records, const TString& expected = {}) {
         bool update = false;
         for (const auto& [_, data] : records) {
-            if (data.Contains("\"update\"")) {
+            if (expected.empty() ? data.Contains("\"update\"") : AreJsonsEqual(data, expected)) {
                 update = true;
             } else if (update && data.Contains("\"resolved\"")) {
                 return true;
@@ -4498,7 +4498,8 @@ Y_UNIT_TEST_SUITE(Cdc) {
         if (keyRange) {
             auto read = [&](ui32 id) { return GetRecords(runtime, edgeActor, "/Root/Table/Stream", id); };
             WaitFor(runtime, [&] {
-                return HasResolvedAfterUpdate(read(1)) && HasResolvedAfterUpdate(read(2));
+                return HasResolvedAfterUpdate(read(1), R"({"update":{"value":11},"key":[1]})")
+                    && HasResolvedAfterUpdate(read(2), R"({"update":{"value":80},"key":[8]})");
             }, "resolved after updates in both KeyRange children");
             UNIT_ASSERT(HasKey(read(1), "1") && !HasKey(read(1), "8"));
             UNIT_ASSERT(HasKey(read(2), "8") && !HasKey(read(2), "1"));
