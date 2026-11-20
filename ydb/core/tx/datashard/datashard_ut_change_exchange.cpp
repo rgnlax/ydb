@@ -4242,10 +4242,10 @@ Y_UNIT_TEST_SUITE(Cdc) {
         });
     }
 
-    enum class EScanTopicMode { Fixed, Auto, KeyRange };
+    enum class EScanTopicMode { Fixed, Auto, KeyRange, KeyRangeWithFlagDisabledDuringScan };
 
     void InitialScanTopicSplitRecovery(EScanTopicMode mode, bool rebootPq, bool pauseAutoPartitioning = false, bool delayedPrepared = false) {
-        const bool keyRange = mode == EScanTopicMode::KeyRange;
+        const bool keyRange = mode == EScanTopicMode::KeyRange || mode == EScanTopicMode::KeyRangeWithFlagDisabledDuringScan;
         const bool topicAutoPartitioning = mode != EScanTopicMode::Fixed;
         TPortManager portManager;
         TServer::TPtr server = new TServer(TServerSettings(portManager.GetPort(2134), {}, DefaultPQConfig())
@@ -4274,6 +4274,9 @@ Y_UNIT_TEST_SUITE(Cdc) {
         }
         WaitTxNotification(server, edgeActor, AsyncAlterAddStream(server, "/Root", "Table", stream));
         WaitFor(runtime, [&]{ return !scans.empty(); }, "initial scan request");
+        if (mode == EScanTopicMode::KeyRangeWithFlagDisabledDuringScan) {
+            runtime.GetAppData().FeatureFlags.SetEnableCdcKeyRangeHeartbeats(false);
+        }
         const auto schemeShard = scans.front()->Get<TEvDataShard::TEvCdcStreamScanRequest>()
             ->Record.GetTablePathId().GetOwnerId();
 
@@ -4477,8 +4480,7 @@ Y_UNIT_TEST_SUITE(Cdc) {
             R"({"update":{"value":20},"key":[2]})",
             R"({"update":{"value":30},"key":[3]})",
         });
-        // CDC hashes the JSON key, then the topic chooser hashes that partition key.
-        // These updates route to opposite children of the 'a' boundary.
+        // These updates route to opposite children for both topic layouts.
         ExecSQL(server, edgeActor, R"(
             UPSERT INTO `/Root/Table` (key, value) VALUES (1, 11), (8, 80);
         )");
@@ -4512,6 +4514,10 @@ Y_UNIT_TEST_SUITE(Cdc) {
             UNIT_ASSERT_VALUES_EQUAL(describe.GetStatus(), NKikimrScheme::StatusSuccess);
             UNIT_ASSERT(describe.GetPathDescription().HasCdcStreamDescription());
             if (describe.GetPathDescription().GetCdcStreamDescription().GetState() == NKikimrSchemeOp::ECdcStreamStateReady) {
+                if (keyRange) {
+                    UNIT_ASSERT_VALUES_EQUAL(describe.GetPathDescription().GetCdcStreamDescription().GetHeartbeatMode(),
+                        NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange);
+                }
                 return;
             }
             runtime.SimulateSleep(TDuration::MilliSeconds(100));
@@ -4525,6 +4531,10 @@ Y_UNIT_TEST_SUITE(Cdc) {
 
     Y_UNIT_TEST(InitialScanKeyRangeTopicSplitAfterParticipantRecovery) {
         InitialScanTopicSplitRecovery(EScanTopicMode::KeyRange, true);
+    }
+
+    Y_UNIT_TEST(InitialScanKeyRangeSurvivesFlagDisableAndSplitRecovery) {
+        InitialScanTopicSplitRecovery(EScanTopicMode::KeyRangeWithFlagDisabledDuringScan, true);
     }
 
     Y_UNIT_TEST(InitialScanTopicSplitAfterParticipantRecovery) {

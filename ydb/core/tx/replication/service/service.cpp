@@ -28,6 +28,7 @@
 
 #include <util/string/hex.h>
 
+#include <algorithm>
 #include <tuple>
 #include <variant>
 
@@ -416,17 +417,32 @@ public:
     void Handle(IActorOps* ops, TEvService::TEvTxIdResult::TPtr& ev) {
         if (ev->Get()->Record.HasWorker()) {
             const auto id = TWorkerId::Parse(ev->Get()->Record.GetWorker());
-            if (!HasWorker(id)) {
+            auto waiters = PendingIndexTxIds.find(id);
+            if (waiters == PendingIndexTxIds.end()) {
                 return;
             }
 
-            auto& pending = PendingIndexTxIds[id];
-            for (const auto& assignment : ev->Get()->Record.GetVersionTxIds()) {
+            auto& pending = waiters->second;
+            auto& assignments = *ev->Get()->Record.MutableVersionTxIds();
+            // Index replies may contain overlapping intervals. Match all of
+            // them against the live requests before consuming any waiter.
+            const auto unused = std::remove_if(assignments.begin(), assignments.end(), [&](const auto& assignment) {
+                auto it = pending.lower_bound(TRowVersion::FromProto(assignment.GetBegin()));
+                return it == pending.end() || *it >= TRowVersion::FromProto(assignment.GetVersion());
+            });
+            assignments.erase(unused, assignments.end());
+            if (assignments.empty()) {
+                return;
+            }
+            for (const auto& assignment : assignments) {
                 const auto begin = TRowVersion::FromProto(assignment.GetBegin());
                 const auto end = TRowVersion::FromProto(assignment.GetVersion());
                 for (auto it = pending.lower_bound(begin); it != pending.end() && *it < end;) {
                     it = pending.erase(it);
                 }
+            }
+            if (pending.empty()) {
+                PendingIndexTxIds.erase(waiters);
             }
             ops->Send(GetWorkerActorId(id), ev->ReleaseBase().Release(), ev->Flags, ev->Cookie);
             return;
