@@ -273,6 +273,31 @@ Y_UNIT_TEST_SUITE(ReplicationTransactions) {
         UNIT_ASSERT_VALUES_EQUAL(env.SdkTransactions(true).value().Assigned.size(), 0);
     }
 
+    Y_UNIT_TEST_TWIN(KeepsCoalescedAssignmentsAfterAnEarlierCommit, Reboot) {
+        TTransactionsEnv env;
+        const auto first = env.Assign(1);
+        const auto middle = env.Assign(29999);
+        env.Assign(39999);
+        env.Assign(49999);
+        const auto last = env.Assign(59999);
+        UNIT_ASSERT_VALUES_EQUAL(env.Assign(69999), last);
+        UNIT_ASSERT_VALUES_EQUAL(env.Assign(19999), middle);
+        UNIT_ASSERT_VALUES_EQUAL(env.Count(), 5);
+
+        env.HoldCommits();
+        env.Heartbeat();
+        UNIT_ASSERT(env.GetRuntime().GrabEdgeEvent<TEvents::TEvWakeup>(env.GetSender(), TDuration::Seconds(30)));
+        env.CommitStatus(first, TEvTxUserProxy::TEvProposeTransactionStatus::EStatus::ExecComplete);
+        UNIT_ASSERT_VALUES_EQUAL(env.Count(), 4);
+        if (Reboot) {
+            env.SendAsync(env.TabletId, new TEvents::TEvPoisonPill());
+            env.Handshake();
+        }
+        UNIT_ASSERT_VALUES_EQUAL(env.Assign(59999), last);
+        UNIT_ASSERT_VALUES_EQUAL(env.Assign(19999), middle);
+        UNIT_ASSERT_VALUES_EQUAL(env.Count(), 4);
+    }
+
     Y_UNIT_TEST(RestoresAssignedTransactionsAfterRestart) {
         TTransactionsEnv env;
         const auto first = env.Assign(1);
