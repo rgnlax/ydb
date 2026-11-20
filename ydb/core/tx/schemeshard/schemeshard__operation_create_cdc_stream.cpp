@@ -7,6 +7,7 @@
 
 #include <ydb/core/engine/mkql_proto.h>
 #include <ydb/core/scheme/scheme_types_proto.h>
+#include <ydb/core/tx/replication/common/changefeed.h>
 
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::FLAT_TX_SCHEMESHARD
 
@@ -717,20 +718,10 @@ void DoCreateLock(
     result.push_back(CreateLock(NextPartId(opId, result), outTx));
 }
 
-bool IsSupportedByReplication(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc, const TString& capability) {
-    for (auto& attribute : streamDesc.GetUserAttributes()) {
+bool IsSupportedByReplication(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc, TStringBuf capability) {
+    for (const auto& attribute : streamDesc.GetUserAttributes()) {
         if (attribute.GetKey() == ATTR_ASYNC_REPLICATION) {
-            if (!attribute.HasValue()) {
-                break;
-            }
-
-            NJson::TJsonValue result;
-            if (!NJson::ReadJsonFastTree(attribute.GetValue(), &result)) {
-                break;
-            }
-
-            auto map = result.GetMap();
-            return map[capability].GetBoolean();
+            return NReplication::HasChangefeedCapability(attribute.GetValue(), capability);
         }
     }
 
@@ -756,7 +747,10 @@ TCdcPqPartParams MakeCdcPqPartParams(const NKikimrSchemeOp::TCreateCdcStream& op
         return params;
     }
 
-    if (!IsSupportedByReplication(op.GetStreamDescription(), "supports_topic_autopartitioning")) {
+    // A restored KeyRange feed retains typed boundaries even on a destination
+    // where the heartbeat feature is disabled and the stream runs in Direct.
+    if (op.GetStreamDescription().GetHeartbeatMode() == NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange
+        || !IsSupportedByReplication(op.GetStreamDescription(), "supports_topic_autopartitioning")) {
         return params;
     }
 
@@ -1018,7 +1012,7 @@ bool FillBoundaries(const TTableInfo& table, const NKikimrSchemeOp::TCreateCdcSt
 bool ShouldUseKeyRangeHeartbeats(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc) {
     return AppData()->FeatureFlags.GetEnableCdcKeyRangeHeartbeats()
         && streamDesc.GetResolvedTimestampsIntervalMs() > 0
-        && IsSupportedByReplication(streamDesc, "supports_key_range_autopartitioning");
+        && IsSupportedByReplication(streamDesc, NReplication::KeyRangeCapability);
 }
 
 bool CheckCdcKeyRangeHeartbeatsCanBeUsed(
@@ -1038,6 +1032,7 @@ bool ShouldAggregateHeartbeats(const NKikimrSchemeOp::TCdcStreamDescription& str
     return AppData()->FeatureFlags.GetEnableCdcAggregator()
         // DataShards emit heartbeats only with a resolved timestamps interval, otherwise there is nothing to aggregate
         && streamDesc.GetResolvedTimestampsIntervalMs() > 0
+        && streamDesc.GetHeartbeatMode() != NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange
         && !ShouldUseKeyRangeHeartbeats(streamDesc);
 }
 
