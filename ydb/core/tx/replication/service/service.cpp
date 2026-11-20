@@ -218,8 +218,6 @@ public:
         }
     }
 
-    void SetIndexBuildWorker(const TWorkerId& id) { IndexBuildWorkers.insert(id); }
-
     void Handle(const TActorContext& ctx, TEvService::TEvSourceOffsetReport::TPtr& ev) {
         if (!SupportsSourceOffsets) {
             return; // old controller: do not authorize further source commits
@@ -282,6 +280,9 @@ public:
 
         Y_ABORT_UNLESS(res.second);
 
+        if (command.GetLocalTableWriter().GetIndexBuild()) {
+            IndexBuildWorkers.insert(id);
+        }
         const auto actorId = worker.ActorId;
         ActorIdToWorkerId.emplace(actorId, id);
 
@@ -290,43 +291,16 @@ public:
     }
 
     void StopWorker(IActorOps* ops, const TWorkerId& id) {
-        auto it = Workers.find(id);
-        Y_ABORT_UNLESS(it != Workers.end());
-
-        ops->Send(it->second, new TEvents::TEvPoison());
+        ops->Send(GetWorkerActorId(id), new TEvents::TEvPoison());
         SendWorkerStatus(ops, id, NKikimrReplication::TEvWorkerStatus::STATUS_STOPPED);
-
-        ActorIdToWorkerId.erase(it->second);
-        PendingStatsValues.erase(id);
-        if (PendingStatsValues.empty()) {
-            ops->Schedule(TDuration::Zero(), new TEvWorker::TEvStatsWakeup(0, ControllerTabletId));
-        }
-
-        IndexBuildWorkers.erase(id);
-        PendingIndexTxIds.erase(id);
-        DataEnded.erase(id);
-        Workers.erase(it);
+        RemoveWorker(ops, id);
     }
 
     template <typename... Args>
     void StopWorker(IActorOps* ops, const TActorId& id, Args&&... args) {
-        auto it = ActorIdToWorkerId.find(id);
-        Y_ABORT_UNLESS(it != ActorIdToWorkerId.end());
-
-        // actor already stopped
-        SendWorkerStatus(ops, it->second, NKikimrReplication::TEvWorkerStatus::STATUS_STOPPED, std::forward<Args>(args)...);
-
-        IndexBuildWorkers.erase(it->second);
-        PendingIndexTxIds.erase(it->second);
-        DataEnded.erase(it->second);
-        Workers.erase(it->second);
-
-        PendingStatsValues.erase(it->second);
-        if (PendingStatsValues.empty()) {
-            ops->Schedule(TDuration::Zero(), new TEvWorker::TEvStatsWakeup(0, ControllerTabletId));
-        }
-
-        ActorIdToWorkerId.erase(it);
+        const auto workerId = GetWorkerId(id);
+        SendWorkerStatus(ops, workerId, NKikimrReplication::TEvWorkerStatus::STATUS_STOPPED, std::forward<Args>(args)...);
+        RemoveWorker(ops, workerId);
     }
 
     template <typename... Args>
@@ -462,9 +436,13 @@ public:
 
         for (const auto& kv : ev->Get()->Record.GetVersionTxIds()) {
             const auto version = TRowVersion::FromProto(kv.GetVersion());
+            auto it = PendingTxId.lower_bound(IntervalBegin(version));
+            if (it == PendingTxId.end() || it->first >= version) {
+                continue;
+            }
             TxIds.emplace(version, kv.GetTxId());
 
-            for (auto it = PendingTxId.lower_bound(IntervalBegin(version)); it != PendingTxId.end() && it->first < version;) {
+            while (it != PendingTxId.end() && it->first < version) {
                 for (const auto& actorId : it->second) {
                     results[actorId].emplace(version, kv.GetTxId());
                 }
@@ -488,27 +466,17 @@ public:
         auto& record = ev->Get()->Record;
         const auto version = TRowVersion::FromProto(record.GetVersion());
 
-        if (const auto& prevVersion = worker.Heartbeat) {
-            if (version <= prevVersion) {
-                return;
-            }
-
-            auto it = WorkersByHeartbeat.find(prevVersion);
-            if (it != WorkersByHeartbeat.end()) {
-                it->second.erase(id);
-                if (it->second.empty()) {
-                    WorkersByHeartbeat.erase(it);
-                }
-            }
+        if (worker.Heartbeat && version <= worker.Heartbeat) {
+            return;
         }
 
+        if (!IndexBuildWorkers.contains(id)) {
+            EraseHeartbeat(id, worker.Heartbeat);
+            WorkersWithHeartbeat.insert(id);
+            WorkersByHeartbeat[version].insert(id);
+            PruneTxIds();
+        }
         worker.Heartbeat = version;
-        WorkersWithHeartbeat.insert(id);
-        WorkersByHeartbeat[version].insert(id);
-
-        if (Workers.size() - IndexBuildWorkers.size() == WorkersWithHeartbeat.size()) {
-            TxIds.erase(TxIds.begin(), TxIds.upper_bound(WorkersByHeartbeat.begin()->first));
-        }
 
         id.Serialize(*record.MutableWorker());
         ops->Send(ActorId, ev->ReleaseBase().Release(), ev->Flags, ev->Cookie);
@@ -535,6 +503,50 @@ public:
     }
 
 private:
+    void EraseHeartbeat(const TWorkerId& id, const TRowVersion& version) {
+        auto it = WorkersByHeartbeat.find(version);
+        if (it != WorkersByHeartbeat.end()) {
+            it->second.erase(id);
+            if (it->second.empty()) {
+                WorkersByHeartbeat.erase(it);
+            }
+        }
+    }
+
+    void PruneTxIds() {
+        if (Workers.size() == IndexBuildWorkers.size()) {
+            TxIds.clear();
+        } else if (Workers.size() - IndexBuildWorkers.size() == WorkersWithHeartbeat.size()) {
+            TxIds.erase(TxIds.begin(), TxIds.upper_bound(WorkersByHeartbeat.begin()->first));
+        }
+    }
+
+    void RemoveWorker(IActorOps* ops, const TWorkerId& id) {
+        const auto worker = Workers.find(id);
+        Y_ABORT_UNLESS(worker != Workers.end());
+        EraseHeartbeat(id, worker->second.Heartbeat);
+        WorkersWithHeartbeat.erase(id);
+        for (auto it = PendingTxId.begin(); it != PendingTxId.end();) {
+            it->second.erase(worker->second.ActorId);
+            if (it->second.empty()) {
+                it = PendingTxId.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        ActorIdToWorkerId.erase(worker->second.ActorId);
+        IndexBuildWorkers.erase(id);
+        PendingIndexTxIds.erase(id);
+        DataEnded.erase(id);
+        Workers.erase(worker);
+        PruneTxIds();
+        PendingStatsValues.erase(id);
+        if (PendingStatsValues.empty()) {
+            ops->Schedule(TDuration::Zero(), new TEvWorker::TEvStatsWakeup(0, ControllerTabletId));
+        }
+    }
+
     TRowVersion IntervalBegin(const TRowVersion& end) const {
         // The controller replies with the requested interval end, including when
         // several adjacent intervals share one write transaction.
@@ -851,10 +863,6 @@ class TReplicationService: public TActorBootstrapped<TReplicationService> {
                 {"worker", id},
                 {"reason", R"("generation mismatch")"});
             return;
-        }
-
-        if (record.GetCommand().GetLocalTableWriter().GetIndexBuild()) {
-            session.SetIndexBuildWorker(id);
         }
 
         if (session.HasWorker(id)) {

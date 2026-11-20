@@ -131,10 +131,7 @@ class TController::TTxIndexBuild: public TTxBase {
     ui64 Allocate(const TRowVersion& end, NIceDb::TNiceDb& db) {
         const ui64 txId = Self->AllocatedTxIds.front();
         Self->AllocatedTxIds.pop_front();
-        db.Table<Schema::TxIds>().Key(end.Step, end.TxId).Update(
-            NIceDb::TUpdate<Schema::TxIds::WriteTxId>(txId)
-        );
-        Self->AssignedTxIds.emplace(end, txId);
+        Self->SaveAssignment(db, end, {txId, end.Step});
         return txId;
     }
 
@@ -178,7 +175,7 @@ class TController::TTxIndexBuild: public TTxBase {
 
         const auto& last = *Self->AssignedTxIds.rbegin();
         return last.first > join
-            && last.second != Self->CommittingTxId;
+            && last.second.WriteTxId != Self->CommittingTxId;
     }
 
     void Assign(NIceDb::TNiceDb& db) {
@@ -211,17 +208,10 @@ class TController::TTxIndexBuild: public TTxBase {
                 if (global) {
                     auto assigned = Self->AssignedTxIds.lower_bound(end);
                     if (assigned != Self->AssignedTxIds.end()) {
+                        txId = Self->CoverEarlierInterval(db, assigned->first, end);
                         end = assigned->first;
-                        txId = assigned->second;
                     } else if (CanReuseLastGlobalAssignment(join)) {
-                        auto node = Self->AssignedTxIds.extract(Self->AssignedTxIds.rbegin()->first);
-                        db.Table<Schema::TxIds>().Key(node.key().Step, node.key().TxId).Delete();
-                        node.key() = end;
-                        txId = node.mapped();
-                        db.Table<Schema::TxIds>().Key(end.Step, end.TxId).Update(
-                            NIceDb::TUpdate<Schema::TxIds::WriteTxId>(txId)
-                        );
-                        Self->AssignedTxIds.insert(std::move(node));
+                        txId = Self->ExtendLastAssignment(db, end);
                     } else if (!Self->AllocatedTxIds.empty() && Self->AssignedTxIds.size() < MaxOpenTxIds + 1) {
                         txId = Allocate(end, db);
                     }
