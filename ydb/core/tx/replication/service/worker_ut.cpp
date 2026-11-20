@@ -52,7 +52,8 @@ namespace {
             UNIT_ASSERT(Runtime.GrabEdgeEvent<TEvService::TEvStatus>(Edge, TDuration::Seconds(30)));
         }
 
-        TActorId Start(ui64 id, const NKikimrReplication::TConnectionParams& credentials, ui64 intervalMs = 0) {
+        TActorId Start(ui64 id, const NKikimrReplication::TConnectionParams& credentials, ui64 intervalMs = 0,
+                bool indexBuild = false) {
             auto run = MakeHolder<TEvService::TEvRunWorker>();
             run->Record.MutableController()->SetTabletId(42);
             run->Record.MutableController()->SetGeneration(1);
@@ -74,6 +75,9 @@ namespace {
             reader->SetConsumerName("consumer");
             reader->SetTopicPartitionId(0);
             Env.GetPathId("/Root/Table").ToProto(command->MutableLocalTableWriter()->MutablePathId());
+            if (indexBuild) {
+                command->MutableLocalTableWriter()->SetIndexBuild(true);
+            }
             const auto requestCount = Blocked.size();
             Runtime.Send(new IEventHandle(Service, Edge, run.Release()));
             RequireStatus(id, NKikimrReplication::TEvWorkerStatus::STATUS_RUNNING);
@@ -490,6 +494,58 @@ Y_UNIT_TEST_SUITE(ServiceGlobalTxIds) {
 
     Y_UNIT_TEST(RemovesFailedWorkerFromHeartbeatAndTxIdWaiters) {
         CheckRetiredGlobalWorker(true);
+    }
+
+    Y_UNIT_TEST(ReplacementIndexWorkerReceivesOnlyRequestedIntervals) {
+        TServiceWorkerEnv env;
+        auto& runtime = env.Runtime;
+        THashMap<TActorId, TActorId> owners;
+        auto handshakes = runtime.AddObserver<TEvWorker::TEvHandshake>([&](auto& ev) {
+            owners[ev->GetRecipientRewrite()] = ev->Sender;
+        });
+        auto start = [&] {
+            NKikimrReplication::TConnectionParams credentials;
+            credentials.MutableOAuthToken();
+            env.Start(1, credentials, 10, true);
+            return owners.at(env.Blocked.back()->Sender);
+        };
+        auto request = [&](TActorId actor, TVector<TRowVersion> versions) {
+            runtime.Send(new IEventHandle(env.Service, actor, new TEvService::TEvGetTxId(versions)));
+            const auto ev = runtime.GrabEdgeEvent<TEvService::TEvGetTxId>(env.Edge, TDuration::Seconds(5));
+            UNIT_ASSERT(ev && ev->Get()->Record.HasWorker());
+        };
+        auto reply = [&](std::initializer_list<std::pair<ui64, ui64>> intervals) {
+            auto ev = MakeHolder<TEvService::TEvTxIdResult>(42, 1);
+            TWorkerId{1, 1, 1}.Serialize(*ev->Record.MutableWorker());
+            for (auto [begin, end] : intervals) {
+                auto& item = *ev->Record.AddVersionTxIds();
+                TRowVersion(begin, 0).ToProto(item.MutableBegin());
+                TRowVersion(end, 0).ToProto(item.MutableVersion());
+                item.SetTxId(end + 100);
+            }
+            runtime.Send(new IEventHandle(env.Service, env.Edge, ev.Release()));
+        };
+        TVector<ui64> received;
+        auto responses = runtime.AddObserver<TEvService::TEvTxIdResult>([&](auto& ev) {
+            if (ev->Sender == env.Service) {
+                for (const auto& item : ev->Get()->Record.GetVersionTxIds()) {
+                    received.push_back(item.GetVersion().GetStep());
+                }
+                ev.Reset();
+            }
+        });
+
+        request(start(), {TRowVersion(5, 0)});
+        env.Stop(1);
+        const auto replacement = start();
+        reply({{0, 10}});
+        request(replacement, {TRowVersion(35, 0), TRowVersion(55, 0)});
+        reply({{30, 70}, {30, 40}, {80, 90}});
+        reply({{30, 70}});
+        runtime.Send(new IEventHandle(env.Service, env.Edge, new TEvService::TEvHandshake(42, 1)));
+        UNIT_ASSERT(runtime.GrabEdgeEvent<TEvService::TEvStatus>(env.Edge, TDuration::Seconds(5)));
+        UNIT_ASSERT_VALUES_EQUAL(received, (TVector<ui64>{70, 40}));
+        env.Finish();
     }
 }
 
