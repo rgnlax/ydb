@@ -307,6 +307,33 @@ Y_UNIT_TEST_SUITE(LocalTableWriter) {
         UNIT_ASSERT_STRINGS_EQUAL(StripInPlace(shared), "key = 1, value = local\nkey = 2, value = global");
     }
 
+    Y_UNIT_TEST(IndexWriterCommitsNarrowerAssignmentFirstWhenLegacyReplyListsWiderOneFirst) {
+        TEnv env;
+        CreateConsistentTable(env);
+        NKikimrReplication::TLocalTableWriterSettings settings;
+        settings.SetIndexBuild(true);
+        settings.MutableIndexBuildProgress()->SetSwitchOffset(0);
+        const auto writer = StartIndexBuildWriter(env, settings);
+        env.Send<TEvService::TEvGetTxId>(writer, new TEvWorker::TEvData(0, "TestSource", {
+            TRecord(1, R"({"key":[1],"update":{"value":"early"},"ts":[35,0]})"),
+            TRecord(2, R"({"key":[2],"update":{"value":"late"},"ts":[55,0]})"),
+        }));
+        auto reply = MakeTxIdResult({{TRowVersion(70, 0), 170}});
+        auto* narrow = reply->Record.AddVersionTxIds();
+        TRowVersion(40, 0).ToProto(narrow->MutableVersion());
+        narrow->SetTxId(140);
+        for (auto& item : *reply->Record.MutableVersionTxIds()) {
+            TRowVersion(30, 0).ToProto(item.MutableBegin());
+        }
+        env.Send<TEvService::TEvIndexBuildProgress>(writer, std::move(reply));
+        CommitWrites(env.GetRuntime(), {"/Root/Table"}, 140);
+        auto early = ReadShardedTable(env.GetRuntime(), "/Root/Table");
+        UNIT_ASSERT_STRINGS_EQUAL(StripInPlace(early), "key = 1, value = early");
+        CommitWrites(env.GetRuntime(), {"/Root/Table"}, 170);
+        auto both = ReadShardedTable(env.GetRuntime(), "/Root/Table");
+        UNIT_ASSERT_STRINGS_EQUAL(StripInPlace(both), "key = 1, value = early\nkey = 2, value = late");
+    }
+
     Y_UNIT_TEST(ConsistentWriteKeepsInterleavedVersionsInTheirCommitIntervals) {
         TEnv env;
         CreateConsistentTable(env);

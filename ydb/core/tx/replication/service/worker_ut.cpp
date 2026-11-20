@@ -513,8 +513,9 @@ Y_UNIT_TEST_SUITE(ServiceGlobalTxIds) {
             runtime.Send(new IEventHandle(env.Service, actor, new TEvService::TEvGetTxId(versions)));
             const auto ev = runtime.GrabEdgeEvent<TEvService::TEvGetTxId>(env.Edge, TDuration::Seconds(5));
             UNIT_ASSERT(ev && ev->Get()->Record.HasWorker());
+            return ev->Cookie;
         };
-        auto reply = [&](std::initializer_list<std::pair<ui64, ui64>> intervals) {
+        auto reply = [&](std::initializer_list<std::pair<ui64, ui64>> intervals, ui64 cookie) {
             auto ev = MakeHolder<TEvService::TEvTxIdResult>(42, 1);
             TWorkerId{1, 1, 1}.Serialize(*ev->Record.MutableWorker());
             for (auto [begin, end] : intervals) {
@@ -523,7 +524,7 @@ Y_UNIT_TEST_SUITE(ServiceGlobalTxIds) {
                 TRowVersion(end, 0).ToProto(item.MutableVersion());
                 item.SetTxId(end + 100);
             }
-            runtime.Send(new IEventHandle(env.Service, env.Edge, ev.Release()));
+            runtime.Send(new IEventHandle(env.Service, env.Edge, ev.Release(), 0, cookie));
         };
         TVector<ui64> received;
         auto responses = runtime.AddObserver<TEvService::TEvTxIdResult>([&](auto& ev) {
@@ -535,13 +536,15 @@ Y_UNIT_TEST_SUITE(ServiceGlobalTxIds) {
             }
         });
 
-        request(start(), {TRowVersion(5, 0)});
+        const auto oldCookie = request(start(), {TRowVersion(5, 0)});
         env.Stop(1);
         const auto replacement = start();
-        reply({{0, 10}});
-        request(replacement, {TRowVersion(35, 0), TRowVersion(55, 0)});
-        reply({{30, 70}, {30, 40}, {80, 90}});
-        reply({{30, 70}});
+        reply({{0, 10}}, oldCookie);
+        const auto cookie = request(replacement, {TRowVersion(35, 0), TRowVersion(55, 0)});
+        UNIT_ASSERT(oldCookie && cookie && oldCookie != cookie);
+        reply({{0, 100}}, oldCookie);
+        reply({{30, 70}, {30, 40}, {80, 90}}, cookie);
+        reply({{30, 70}}, cookie);
         runtime.Send(new IEventHandle(env.Service, env.Edge, new TEvService::TEvHandshake(42, 1)));
         UNIT_ASSERT(runtime.GrabEdgeEvent<TEvService::TEvStatus>(env.Edge, TDuration::Seconds(5)));
         UNIT_ASSERT_VALUES_EQUAL(received, (TVector<ui64>{70, 40}));
