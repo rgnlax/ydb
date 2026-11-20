@@ -570,7 +570,6 @@ THolder<TEvSchemeShard::TEvModifySchemeTransaction> CreateChangefeedPropose(
     if (::NKikimr::NBackup::IsKeyRangeReplicationBackup(changefeed)) {
         // The destination table provides the typed boundaries. Serialized
         // partition counts would create uniform partitions or enable hashing.
-        cdcStreamDescription.SetHeartbeatMode(NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange);
         return propose;
     }
 

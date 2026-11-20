@@ -17,6 +17,25 @@ namespace NCdc {
 
 namespace {
 
+bool IsSupportedByReplication(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc, TStringBuf capability) {
+    for (const auto& attribute : streamDesc.GetUserAttributes()) {
+        if (attribute.GetKey() == ATTR_ASYNC_REPLICATION) {
+            return NReplication::HasChangefeedCapability(attribute.GetValue(), capability);
+        }
+    }
+    return false;
+}
+
+bool RequestsKeyRangeHeartbeats(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc) {
+    return streamDesc.GetResolvedTimestampsIntervalMs() > 0
+        && IsSupportedByReplication(streamDesc, NReplication::KeyRangeCapability);
+}
+
+bool IsKeyRangeImport(const TSchemeShard& ss, const TOperationId& id,
+        const NKikimrSchemeOp::TCdcStreamDescription& streamDesc) {
+    return ss.TxIdToImport.contains(id.GetTxId()) && RequestsKeyRangeHeartbeats(streamDesc);
+}
+
 class TPropose: public TSubOperationState {
 public:
     virtual const char* Name() const override final { return "TPropose"; }
@@ -350,7 +369,7 @@ public:
         }
 
         TMaybe<TChannelsBindings> aggregatorChannels;
-        if (ShouldAggregateHeartbeats(streamDesc)) {
+        if (ShouldAggregateHeartbeats(streamDesc) && !IsKeyRangeImport(*context.SS, OperationId, streamDesc)) {
             aggregatorChannels = CheckCdcAggregatorCanBeCreated(op, streamPath, context, result);
             if (!aggregatorChannels) {
                 return result;
@@ -718,19 +737,10 @@ void DoCreateLock(
     result.push_back(CreateLock(NextPartId(opId, result), outTx));
 }
 
-bool IsSupportedByReplication(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc, TStringBuf capability) {
-    for (const auto& attribute : streamDesc.GetUserAttributes()) {
-        if (attribute.GetKey() == ATTR_ASYNC_REPLICATION) {
-            return NReplication::HasChangefeedCapability(attribute.GetValue(), capability);
-        }
-    }
-
-    return false;
-}
-
 } // anonymous
 
-TCdcPqPartParams MakeCdcPqPartParams(const NKikimrSchemeOp::TCreateCdcStream& op, ui64 tablePartitionCount, ui64 maxShardsInPath, bool keyRangeHeartbeats) {
+TCdcPqPartParams MakeCdcPqPartParams(const NKikimrSchemeOp::TCreateCdcStream& op, ui64 tablePartitionCount,
+        ui64 maxShardsInPath, bool keyRangeHeartbeats, bool keyRangeImport) {
     // Autopartitioned replication topics are hash-partitioned. Cap that split
     // range by the path shard limit so a large table still gets a creatable topic.
     const ui64 maxPartitionCountLimit = std::min<ui64>(maxShardsInPath, Max<ui32>());
@@ -749,8 +759,7 @@ TCdcPqPartParams MakeCdcPqPartParams(const NKikimrSchemeOp::TCreateCdcStream& op
 
     // A restored KeyRange feed retains typed boundaries even on a destination
     // where the heartbeat feature is disabled and the stream runs in Direct.
-    if (op.GetStreamDescription().GetHeartbeatMode() == NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange
-        || !IsSupportedByReplication(op.GetStreamDescription(), "supports_topic_autopartitioning")) {
+    if (keyRangeImport || !IsSupportedByReplication(op.GetStreamDescription(), "supports_topic_autopartitioning")) {
         return params;
     }
 
@@ -785,14 +794,15 @@ void DoCreatePqPart(
         const TString& streamName,
         TTableInfo::TCPtr table,
         const TVector<TString>& boundaries,
-        const bool acceptExisted)
+        const bool acceptExisted,
+        const bool keyRangeImport)
 {
     auto outTx = TransactionTemplate(streamPath.PathString(), NKikimrSchemeOp::EOperationType::ESchemeOpCreatePersQueueGroup);
     outTx.SetFailOnExist(!acceptExisted);
 
     const ui64 maxShardsInPath = streamPath.DomainInfo()->GetSchemeLimits().MaxShardsInPath;
     const auto pqParams = MakeCdcPqPartParams(op, table->GetPartitions().size(), maxShardsInPath,
-        ShouldUseKeyRangeHeartbeats(op.GetStreamDescription()));
+        ShouldUseKeyRangeHeartbeats(op.GetStreamDescription()), keyRangeImport);
 
     auto& desc = *outTx.MutableCreatePersQueueGroup();
     desc.SetName("streamImpl");
@@ -1010,9 +1020,7 @@ bool FillBoundaries(const TTableInfo& table, const NKikimrSchemeOp::TCreateCdcSt
 } // anonymous
 
 bool ShouldUseKeyRangeHeartbeats(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc) {
-    return AppData()->FeatureFlags.GetEnableCdcKeyRangeHeartbeats()
-        && streamDesc.GetResolvedTimestampsIntervalMs() > 0
-        && IsSupportedByReplication(streamDesc, NReplication::KeyRangeCapability);
+    return AppData()->FeatureFlags.GetEnableCdcKeyRangeHeartbeats() && RequestsKeyRangeHeartbeats(streamDesc);
 }
 
 bool CheckCdcKeyRangeHeartbeatsCanBeUsed(
@@ -1032,7 +1040,6 @@ bool ShouldAggregateHeartbeats(const NKikimrSchemeOp::TCdcStreamDescription& str
     return AppData()->FeatureFlags.GetEnableCdcAggregator()
         // DataShards emit heartbeats only with a resolved timestamps interval, otherwise there is nothing to aggregate
         && streamDesc.GetResolvedTimestampsIntervalMs() > 0
-        && streamDesc.GetHeartbeatMode() != NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange
         && !ShouldUseKeyRangeHeartbeats(streamDesc);
 }
 
@@ -1251,7 +1258,8 @@ TVector<ISubOperation::TPtr> CreateNewCdcStream(TOperationId opId, const TTxTran
     }
 
     DoCreateStream(result, op, opId, workingDirPath, tablePath, acceptExisted, initialScan, tx.GetInternal());
-    DoCreatePqPart(result, op, opId, streamPath, streamName, table, boundaries, acceptExisted);
+    DoCreatePqPart(result, op, opId, streamPath, streamName, table, boundaries, acceptExisted,
+        IsKeyRangeImport(*context.SS, opId, streamDesc));
 
     return result;
 }

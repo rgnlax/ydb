@@ -8137,7 +8137,7 @@ Y_UNIT_TEST_SUITE(TImportTests) {
         const auto& boundary = table.GetTablePartitions(0).GetEndOfRangeKeyPrefix();
         UNIT_ASSERT(!boundary.empty());
 
-        const auto topic = DescribePrivatePath(runtime, stream + "/streamImpl").GetPathDescription().GetPersQueueGroup();
+        const auto topic = DescribePrivatePath(runtime, stream + "/streamImpl", true).GetPathDescription().GetPersQueueGroup();
         const auto& config = topic.GetPQTabletConfig();
         UNIT_ASSERT_VALUES_EQUAL(config.PartitionKeySchemaSize(), 1);
         UNIT_ASSERT_VALUES_EQUAL(topic.GetTotalGroupCount(), 2);
@@ -8266,6 +8266,9 @@ Y_UNIT_TEST_SUITE(TImportTests) {
         UNIT_ASSERT(applicationChangefeedExported);
         UNIT_ASSERT_VALUES_EQUAL(replicationChangefeedExported, restoredMode.has_value());
         runtime.GetAppData().FeatureFlags.SetEnableCdcKeyRangeHeartbeats(restoredMode == NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange);
+        if (restoredMode == NKikimrSchemeOp::ECdcStreamHeartbeatModeDirect) {
+            runtime.GetAppData().FeatureFlags.SetEnableCdcAggregator(true);
+        }
 
         TestImport(runtime, ++txId, "/MyRoot", Sprintf(R"(
             ImportFromS3Settings {
