@@ -24,6 +24,8 @@
 #include <util/generic/set.h>
 #include <util/string/builder.h>
 
+#include <algorithm>
+
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::REPLICATION_SERVICE
 
 namespace NKikimr::NReplication::NService {
@@ -611,7 +613,15 @@ class TLocalTableWriter
         YDB_LOG_DEBUG("Handle",
             {"ev", ev->Get()->ToString()});
 
-        for (const auto& assignment : ev->Get()->Record.GetVersionTxIds()) {
+        auto& assignments = *ev->Get()->Record.MutableVersionTxIds();
+        if (IndexBuild && assignments.size() > 1) {
+            // Old index controllers can return nested ranges in request order.
+            // Apply the nearest upper bound first for records inside both.
+            std::sort(assignments.begin(), assignments.end(), [](const auto& a, const auto& b) {
+                return TRowVersion::FromProto(a.GetVersion()) < TRowVersion::FromProto(b.GetVersion());
+            });
+        }
+        for (const auto& assignment : assignments) {
             const auto begin = TRowVersion::FromProto(assignment.GetBegin());
             const auto end = TRowVersion::FromProto(assignment.GetVersion());
             if (!IndexBuild) {

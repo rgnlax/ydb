@@ -125,7 +125,12 @@ bool TController::CanCommitIndexBuilds(const TRowVersion& version) const {
 
 class TController::TTxIndexBuild: public TTxBase {
     TVector<std::pair<ui64, THolder<TEvService::TEvIndexBuildProgressResult>>> Checkpoints;
-    TVector<std::pair<ui64, THolder<TEvService::TEvTxIdResult>>> Assignments;
+    struct TAssignmentReply {
+        ui32 NodeId;
+        ui64 WorkerCookie;
+        THolder<TEvService::TEvTxIdResult> Event;
+    };
+    TVector<TAssignmentReply> Assignments;
     TVector<std::pair<ui64, TVector<TString>>> Commits;
 
     ui64 Allocate(const TRowVersion& end, NIceDb::TNiceDb& db) {
@@ -201,7 +206,8 @@ class TController::TTxIndexBuild: public TTxBase {
             bool blocked = false;
             for (const auto& v : (*it)->Get()->Record.GetVersions()) {
                 const auto version = TRowVersion::FromProto(v);
-                auto end = IntervalEnd(version, interval);
+                const auto requestedEnd = IntervalEnd(version, interval);
+                auto end = requestedEnd;
                 const auto join = TRowVersion::FromProto(build.GetJoinVersion());
                 const bool global = build.GetPhase() != TBuild::FILLING && version >= join;
                 ui64 txId = 0;
@@ -209,7 +215,6 @@ class TController::TTxIndexBuild: public TTxBase {
                     auto assigned = Self->AssignedTxIds.lower_bound(end);
                     if (assigned != Self->AssignedTxIds.end()) {
                         txId = Self->CoverEarlierInterval(db, assigned->first, end);
-                        end = assigned->first;
                     } else if (CanReuseLastGlobalAssignment(join)) {
                         txId = Self->ExtendLastAssignment(db, end);
                     } else if (!Self->AllocatedTxIds.empty() && Self->AssignedTxIds.size() < MaxOpenTxIds + 1) {
@@ -223,7 +228,6 @@ class TController::TTxIndexBuild: public TTxBase {
                     for (const auto& assigned : build.GetAssignments()) {
                         if (TRowVersion::FromProto(assigned.GetVersion()) >= end) {
                             txId = assigned.GetWriteTxId();
-                            end = TRowVersion::FromProto(assigned.GetVersion());
                             break;
                         }
                     }
@@ -261,13 +265,17 @@ class TController::TTxIndexBuild: public TTxBase {
                 }
 
                 auto& assigned = *reply->Record.AddVersionTxIds();
-                end.ToProto(assigned.MutableVersion());
+                // The write transaction can span multiple buckets. Reply only
+                // for the bucket requested by this worker and its side of the join.
+                const TRowVersion requestedBegin(requestedEnd.Step - interval, 0);
+                const bool beforeJoin = !global && build.GetPhase() != TBuild::FILLING;
+                (beforeJoin ? Min(requestedEnd, join) : requestedEnd).ToProto(assigned.MutableVersion());
+                (global ? Max(requestedBegin, join) : requestedBegin).ToProto(assigned.MutableBegin());
                 assigned.SetTxId(txId);
-                (global ? join : TRowVersion::Min()).ToProto(assigned.MutableBegin());
             }
 
             if (reply->Record.VersionTxIdsSize()) {
-                Assignments.emplace_back((*it)->Sender.NodeId(), std::move(reply));
+                Assignments.push_back({(*it)->Sender.NodeId(), (*it)->Cookie, std::move(reply)});
             }
 
             if (blocked) {
@@ -408,8 +416,8 @@ public:
         for (auto& [node, ev] : Checkpoints) {
             ctx.Send(MakeReplicationServiceId(node), std::move(ev));
         }
-        for (auto& [node, ev] : Assignments) {
-            ctx.Send(MakeReplicationServiceId(node), std::move(ev));
+        for (auto& reply : Assignments) {
+            ctx.Send(MakeReplicationServiceId(reply.NodeId), std::move(reply.Event), 0, reply.WorkerCookie);
         }
         for (auto& [txId, paths] : Commits) {
             ctx.Send(MakeTxProxyID(), MakeCommitProposal(txId, paths).Release(), 0, txId);

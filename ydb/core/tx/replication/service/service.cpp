@@ -205,7 +205,7 @@ public:
             if (HasWorker(id) && !versions.empty()) {
                 auto request = MakeHolder<TEvService::TEvGetTxId>(versions);
                 id.Serialize(*request->Record.MutableWorker());
-                ops->Send(ActorId, request.Release());
+                ops->Send(ActorId, request.Release(), 0, GetWorkerActorId(id).LocalId());
             }
         }
 
@@ -388,7 +388,7 @@ public:
             for (const auto& version : ev->Get()->Record.GetVersions()) {
                 PendingIndexTxIds[id].insert(TRowVersion::FromProto(version));
             }
-            ops->Send(ActorId, ev->ReleaseBase().Release(), ev->Flags, ev->Cookie);
+            ops->Send(ActorId, ev->ReleaseBase().Release(), ev->Flags, ev->Sender.LocalId());
             return;
         }
 
@@ -421,6 +421,12 @@ public:
             if (waiters == PendingIndexTxIds.end()) {
                 return;
             }
+            const auto actorId = GetWorkerActorId(id);
+            // Older controllers return zero. New controllers echo the local
+            // actor incarnation, including when a request is retried.
+            if (ev->Cookie && ev->Cookie != actorId.LocalId()) {
+                return;
+            }
 
             auto& pending = waiters->second;
             auto& assignments = *ev->Get()->Record.MutableVersionTxIds();
@@ -444,7 +450,7 @@ public:
             if (pending.empty()) {
                 PendingIndexTxIds.erase(waiters);
             }
-            ops->Send(GetWorkerActorId(id), ev->ReleaseBase().Release(), ev->Flags, ev->Cookie);
+            ops->Send(actorId, ev->ReleaseBase().Release(), ev->Flags);
             return;
         }
 

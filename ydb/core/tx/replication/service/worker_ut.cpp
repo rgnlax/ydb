@@ -545,9 +545,12 @@ Y_UNIT_TEST_SUITE(ServiceGlobalTxIds) {
         reply({{0, 100}}, oldCookie);
         reply({{30, 70}, {30, 40}, {80, 90}}, cookie);
         reply({{30, 70}}, cookie);
-        runtime.Send(new IEventHandle(env.Service, env.Edge, new TEvService::TEvHandshake(42, 1)));
-        UNIT_ASSERT(runtime.GrabEdgeEvent<TEvService::TEvStatus>(env.Edge, TDuration::Seconds(5)));
-        UNIT_ASSERT_VALUES_EQUAL(received, (TVector<ui64>{70, 40}));
+        request(replacement, {TRowVersion(95, 0)});
+        reply({{90, 100}}, cookie);
+        runtime.WaitFor("the replacement worker received its last assignment", [&] {
+            return !received.empty() && received.back() == 100;
+        }, TDuration::Seconds(5));
+        UNIT_ASSERT_VALUES_EQUAL(received, (TVector<ui64>{70, 40, 100}));
         env.Finish();
     }
 }
