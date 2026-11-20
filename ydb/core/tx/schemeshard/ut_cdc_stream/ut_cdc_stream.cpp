@@ -2343,6 +2343,42 @@ Y_UNIT_TEST_SUITE(TCdcStreamTests) {
         });
     }
 
+    Y_UNIT_TEST(ShouldCreateStandaloneKeyRangeStreamWithExplicitPartitionCount) {
+        // given
+        TTestBasicRuntime runtime;
+        TTestEnv env(runtime, TTestEnvOptions()
+            .EnableProtoSourceIdInfo(true)
+            .EnableCdcKeyRangeHeartbeats(true));
+        ui64 txId = 100;
+        TestCreateUint64Table(runtime, ++txId, "Table", 2);
+        env.TestWaitNotification(runtime, txId);
+
+        // when
+        TestCreateCdcStream(runtime, ++txId, "/MyRoot", R"(
+            TableName: "Table"
+            TopicPartitions: 3
+            StreamDescription {
+                Name: "Stream"
+                Mode: ECdcStreamModeUpdate
+                Format: ECdcStreamFormatJson
+                ResolvedTimestampsIntervalMs: 1000
+            }
+        )");
+        env.TestWaitNotification(runtime, txId);
+
+        // then
+        TestDescribeResult(DescribePrivatePath(runtime, "/MyRoot/Table/Stream"), {
+            NLs::StreamHeartbeatMode(NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange),
+            NLs::StreamHasAggregatorTabletId(false),
+        });
+        const auto topic = DescribePrivatePath(runtime, "/MyRoot/Table/Stream/streamImpl");
+        const auto& group = topic.GetPathDescription().GetPersQueueGroup();
+        UNIT_ASSERT_VALUES_EQUAL(group.PartitionsSize(), 3);
+        const auto& config = group.GetPQTabletConfig();
+        UNIT_ASSERT_VALUES_EQUAL(config.PartitionKeySchemaSize(), 1);
+        UNIT_ASSERT_VALUES_EQUAL(config.GetPartitionStrategy().GetMaxPartitionCount(), 3);
+    }
+
     Y_UNIT_TEST_FLAG(ShouldRejectTopicPartitioningWhenKeyRangeHeartbeats, topicAutoPartitioning) {
         // given
         TTestBasicRuntime runtime;

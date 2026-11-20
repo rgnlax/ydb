@@ -9,6 +9,8 @@
 #include <ydb/core/scheme/scheme_types_proto.h>
 #include <ydb/core/tx/replication/common/changefeed.h>
 
+#include <algorithm>
+
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::FLAT_TX_SCHEMESHARD
 
 namespace NKikimr::NSchemeShard {
@@ -29,6 +31,13 @@ bool IsSupportedByReplication(const NKikimrSchemeOp::TCdcStreamDescription& stre
 bool RequestsKeyRangeHeartbeats(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc) {
     return streamDesc.GetResolvedTimestampsIntervalMs() > 0
         && IsSupportedByReplication(streamDesc, NReplication::KeyRangeCapability);
+}
+
+bool IsStandaloneCdcStream(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc) {
+    const auto& attributes = streamDesc.GetUserAttributes();
+    return std::none_of(attributes.begin(), attributes.end(), [](const auto& attribute) {
+        return attribute.GetKey() == ATTR_ASYNC_REPLICATION;
+    });
 }
 
 bool IsKeyRangeImport(const TSchemeShard& ss, const TOperationId& id,
@@ -754,7 +763,9 @@ TCdcPqPartParams MakeCdcPqPartParams(const NKikimrSchemeOp::TCreateCdcStream& op
     if (keyRangeHeartbeats) {
         params.KeyRangeAutoPartitioning = true;
         params.MinPartitionCount = params.TotalGroupCount;
-        params.MaxPartitionCount = static_cast<ui32>(std::max<ui64>(params.TotalGroupCount, maxPartitionCountLimit));
+        params.MaxPartitionCount = op.HasTopicPartitions()
+            ? params.TotalGroupCount
+            : static_cast<ui32>(std::max<ui64>(params.TotalGroupCount, maxPartitionCountLimit));
         return params;
     }
 
@@ -1019,14 +1030,17 @@ bool FillBoundaries(const TTableInfo& table, const NKikimrSchemeOp::TCreateCdcSt
 } // anonymous
 
 bool ShouldUseKeyRangeHeartbeats(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc) {
-    return AppData()->FeatureFlags.GetEnableCdcKeyRangeHeartbeats() && RequestsKeyRangeHeartbeats(streamDesc);
+    return AppData()->FeatureFlags.GetEnableCdcKeyRangeHeartbeats()
+        && (RequestsKeyRangeHeartbeats(streamDesc)
+            || (IsStandaloneCdcStream(streamDesc) && streamDesc.GetResolvedTimestampsIntervalMs() > 0));
 }
 
 bool CheckCdcKeyRangeHeartbeatsCanBeUsed(
         const NKikimrSchemeOp::TCreateCdcStream& op,
         const THolder<TProposeResponse>& result)
 {
-    if (op.HasTopicPartitions() || op.GetTopicAutoPartitioning()) {
+    if (op.GetTopicAutoPartitioning()
+            || (op.HasTopicPartitions() && !IsStandaloneCdcStream(op.GetStreamDescription()))) {
         result->SetError(NKikimrScheme::StatusInvalidParameter,
             "TopicPartitions and TopicAutoPartitioning are not supported for CDC streams with key range heartbeats");
         return false;
