@@ -139,6 +139,9 @@ Y_UNIT_TEST_SUITE(Replication)
                 Key Uint64 NOT NULL,
                 Value String,
                 PRIMARY KEY (Key)
+            ) WITH (
+                AUTO_PARTITIONING_BY_SIZE = ENABLED,
+                AUTO_PARTITIONING_PARTITION_SIZE_MB = 1
             );
         )");
         testCase.ExecuteDDL(Sprintf(R"(
