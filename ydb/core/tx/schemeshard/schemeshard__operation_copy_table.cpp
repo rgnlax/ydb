@@ -349,7 +349,7 @@ public:
                 auto stream = context.SS->CdcStreams.at(txState->CdcPathId);
                 if (stream->AlterData) {
                     stream->FinishAlter();
-                    context.SS->PersistCdcStream(db, txState->CdcPathId);
+                    context.SS->CdcStreamRegistry.PersistCdcStream(db, txState->CdcPathId);
                 }
             }
 

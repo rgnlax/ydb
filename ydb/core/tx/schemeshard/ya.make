@@ -280,6 +280,7 @@ SRCS(
     schemeshard_billing_helpers.cpp
     schemeshard_cdc_stream_common.cpp
     schemeshard_cdc_stream_registry.cpp
+    schemeshard_cdc_stream_repository.cpp
     schemeshard_cdc_stream_scan.cpp
     schemeshard_cdc_stream_topic_partitioning.cpp
     schemeshard_cdc_stream_topic_pipeline.cpp

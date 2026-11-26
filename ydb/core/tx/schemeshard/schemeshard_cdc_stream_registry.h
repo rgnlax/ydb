@@ -1,5 +1,6 @@
 #pragma once
 
+#include "schemeshard_cdc_stream_repository.h"
 #include "schemeshard_info_types.h"
 
 #include <ydb/core/base/feature_flags.h>
@@ -49,6 +50,10 @@ namespace NKikimr::NSchemeShard::NCdc {
         void FinishCdcStreamAlter(NIceDb::TNiceDb& db, const TPathId& streamPathId);
         void RemoveCdcStream(NIceDb::TNiceDb& db, const TPathId& streamPathId);
 
+        void PersistCdcStream(NIceDb::TNiceDb& db, const TPathId& streamPathId);
+        void PersistCdcStreamAlterData(NIceDb::TNiceDb& db, const TPathId& streamPathId);
+        std::pair<bool, THashMap<TPathId, TVector<TPathId>>> LoadCdcStreams(NIceDb::TNiceDb& db);
+
     private:
         TCdcStreamInfo::TPtr GetCdcStream(const TPathId& streamPathId) const;
         NKikimrSchemeOp::TCdcStreamDescription MakeCdcStreamDescription(
@@ -57,6 +62,7 @@ namespace NKikimr::NSchemeShard::NCdc {
             const TCdcStreamInfo& stream) const;
 
         TSchemeShard& Self;
+        TCdcStreamRepository Repository;
     };
 
 } // namespace NKikimr::NSchemeShard::NCdc

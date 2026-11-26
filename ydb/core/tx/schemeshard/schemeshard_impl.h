@@ -894,9 +894,6 @@ public:
     void PersistTableIndexAlterVersion(NIceDb::TNiceDb& db, const TPathId& pathId, const TTableIndexInfo::TPtr indexInfo);
 
     // cdc stream
-    void PersistCdcStream(NIceDb::TNiceDb& db, const TPathId& pathId);
-    void PersistCdcStreamAlterData(NIceDb::TNiceDb& db, const TPathId& pathId);
-    void PersistRemoveCdcStream(NIceDb::TNiceDb& db, const TPathId& tableId);
 
     static void PersistTxMinStep(NIceDb::TNiceDb& db, const TOperationId opId, TStepId minStep);
     void PersistRemoveTx(NIceDb::TNiceDb& db, const TOperationId opId, const TTxState& txState);
