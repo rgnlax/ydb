@@ -1,25 +1,16 @@
-#include "schemeshard_cdc_stream_registry.h"
+#include <ydb/core/tx/schemeshard/cdc_stream/registry.h>
 
-#include "schemeshard__operation_part.h"
-#include "schemeshard_cdc_stream_topic_partitioning.h"
-#include "schemeshard_impl.h"
+#include <ydb/core/tx/schemeshard/schemeshard__operation_part.h>
+#include "repository.h"
+#include <ydb/core/tx/schemeshard/schemeshard_impl.h>
 
 namespace NKikimr::NSchemeShard::NCdc {
 
-std::pair<TCdcStreamInfo::TPtr, TString> MakeCdcStream(
-        const NKikimrSchemeOp::TCreateCdcStream& op,
-        const TFeatureFlags& featureFlags)
-{
-    const auto [heartbeatMode, heartbeatModeError] = ChooseHeartbeatMode(op, featureFlags);
-    if (!heartbeatMode) {
-        return {nullptr, heartbeatModeError};
-    }
+namespace {
 
-    auto stream = TCdcStreamInfo::Create(op.GetStreamDescription());
-    Y_ABORT_UNLESS(stream);
-    stream->AlterData->HeartbeatMode = *heartbeatMode;
-    return {stream, TString()};
-}
+const TCdcStreamRepository Repository;
+
+} // anonymous
 
 TCdcStreamRegistry::TCdcStreamRegistry(TSchemeShard& self)
     : Self(self)

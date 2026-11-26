@@ -1,6 +1,6 @@
-#include "schemeshard__operation_common.h"
-#include "schemeshard_cdc_stream_common.h"
-#include "schemeshard_private.h"
+#include <ydb/core/tx/schemeshard/schemeshard__operation_common.h>
+#include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
+#include <ydb/core/tx/schemeshard/schemeshard_private.h>
 
 #include <ydb/core/base/hive.h>
 #include <ydb/core/tx/datashard/datashard.h>

@@ -1,7 +1,7 @@
-#include "schemeshard_cdc_stream_topic_pipeline.h"
+#include "topic_pipeline.h"
 
-#include "schemeshard_impl.h"
-#include "schemeshard_path.h"
+#include <ydb/core/tx/schemeshard/schemeshard_impl.h>
+#include <ydb/core/tx/schemeshard/schemeshard_path.h>
 
 #include <ydb/core/engine/mkql_proto.h>
 #include <ydb/core/persqueue/writer/source_id_encoding.h>

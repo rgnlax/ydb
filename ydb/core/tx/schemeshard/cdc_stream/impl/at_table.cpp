@@ -1,4 +1,4 @@
-#include "schemeshard_cdc_stream_common.h"
+#include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
 
 #include <ydb/core/protos/tx_datashard.pb.h>
 #include <ydb/core/scheme/scheme_pathid.h>

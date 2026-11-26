@@ -1,9 +1,7 @@
 #pragma once
 
-#include "schemeshard_cdc_stream_repository.h"
-#include "schemeshard_info_types.h"
+#include <ydb/core/tx/schemeshard/schemeshard_info_types.h>
 
-#include <ydb/core/base/feature_flags.h>
 #include <ydb/core/protos/flat_scheme_op.pb.h>
 #include <ydb/core/tablet_flat/flat_cxx_database.h>
 
@@ -17,10 +15,6 @@ struct TOperationContext;
 }
 
 namespace NKikimr::NSchemeShard::NCdc {
-
-    std::pair<TCdcStreamInfo::TPtr, TString> MakeCdcStream(
-        const NKikimrSchemeOp::TCreateCdcStream& op,
-        const TFeatureFlags& featureFlags);
 
     class TCdcStreamRegistry {
     public:
@@ -63,7 +57,6 @@ namespace NKikimr::NSchemeShard::NCdc {
             const TCdcStreamInfo& stream) const;
 
         TSchemeShard& Self;
-        TCdcStreamRepository Repository;
     };
 
 } // namespace NKikimr::NSchemeShard::NCdc

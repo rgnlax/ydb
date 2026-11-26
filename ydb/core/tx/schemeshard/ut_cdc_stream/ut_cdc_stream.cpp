@@ -2,7 +2,7 @@
 #include <ydb/core/persqueue/events/global.h>
 #include <ydb/core/persqueue/writer/source_id_encoding.h>
 #include <ydb/core/testlib/actors/block_events.h>
-#include <ydb/core/tx/schemeshard/schemeshard__operation_create_cdc_stream.h>
+#include <ydb/core/tx/schemeshard/cdc_stream/topic.h>
 #include <ydb/core/tx/schemeshard/schemeshard_billing_helpers.h>
 #include <ydb/core/tx/schemeshard/schemeshard_impl.h>
 #include <ydb/core/tx/schemeshard/schemeshard_private.h>

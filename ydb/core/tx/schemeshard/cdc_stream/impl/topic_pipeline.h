@@ -1,20 +1,13 @@
 #pragma once
 
-#include "schemeshard_cdc_stream_topic_partitioning.h"
-#include "schemeshard_info_types.h"
+#include "topic_partitioning.h"
+#include <ydb/core/tx/schemeshard/schemeshard_info_types.h>
 
 #include <ydb/core/protos/flat_scheme_op.pb.h>
 #include <ydb/core/protos/pqconfig.pb.h>
 
 #include <memory>
 #include <optional>
-
-namespace NKikimr::NSchemeShard {
-
-class TPath;
-struct TOperationContext;
-
-}
 
 namespace NKikimr::NSchemeShard::NCdc {
 
@@ -38,9 +31,5 @@ namespace NKikimr::NSchemeShard::NCdc {
         const TTableInfo& table,
         const THashMap<TShardIdx, TShardInfo>& shardInfos,
         bool splitByTableKey);
-
-    std::optional<NKikimrPQ::TBootstrapConfig> MakeCdcStreamTopicBootstrapConfig(
-        const TOperationContext& context,
-        const TPath& topicPath);
 
 } // namespace NKikimr::NSchemeShard::NCdc

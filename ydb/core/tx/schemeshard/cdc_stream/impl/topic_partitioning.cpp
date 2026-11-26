@@ -1,6 +1,6 @@
-#include "schemeshard_cdc_stream_topic_partitioning.h"
+#include "topic_partitioning.h"
 
-#include "user_attributes.h"
+#include <ydb/core/tx/schemeshard/user_attributes.h>
 
 #include <library/cpp/json/json_reader.h>
 

@@ -1,11 +1,11 @@
 #include "schemeshard__backup_collection_common.h"
 #include "schemeshard__op_traits.h"
 #include "schemeshard__operation_common.h"
-#include "schemeshard__operation_create_cdc_stream.h"
 #include "schemeshard__operation_part.h"
 #include "schemeshard_impl.h"
 
 #include <ydb/core/backup/common/omit_backup.h>
+#include <ydb/core/tx/schemeshard/cdc_stream/operations.h>
 
 
 namespace NKikimr::NSchemeShard {

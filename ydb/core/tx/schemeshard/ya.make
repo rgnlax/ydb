@@ -131,7 +131,6 @@ SRCS(
     schemeshard__operation.h
     schemeshard__op_traits.cpp
     schemeshard__operation_alter_bsv.cpp
-    schemeshard__operation_alter_cdc_stream.cpp
     schemeshard__operation_alter_continuous_backup.cpp
     schemeshard__operation_alter_external_data_source.cpp
     schemeshard__operation_alter_external_table.cpp
@@ -159,7 +158,6 @@ SRCS(
     schemeshard__operation_common.cpp
     schemeshard__operation_common.h
     schemeshard__operation_common_bsv.cpp
-    schemeshard__operation_common_cdc_stream.cpp
     schemeshard__operation_common_external_data_source.cpp
     schemeshard__operation_common_external_table.cpp
     schemeshard__operation_common_pq.cpp
@@ -173,7 +171,6 @@ SRCS(
     schemeshard__operation_create_backup_collection.cpp
     schemeshard__operation_create_full_backup_op.cpp
     schemeshard__operation_create_bsv.cpp
-    schemeshard__operation_create_cdc_stream.cpp
     schemeshard__operation_create_continuous_backup.cpp
     schemeshard__operation_create_external_data_source.cpp
     schemeshard__operation_create_external_table.cpp
@@ -201,7 +198,6 @@ SRCS(
     schemeshard__operation_db_changes.cpp
     schemeshard__operation_drop_backup_collection.cpp
     schemeshard__operation_drop_bsv.cpp
-    schemeshard__operation_drop_cdc_stream.cpp
     schemeshard__operation_drop_continuous_backup.cpp
     schemeshard__operation_drop_external_data_source.cpp
     schemeshard__operation_drop_external_table.cpp
@@ -233,7 +229,6 @@ SRCS(
     schemeshard__operation_part.h
     schemeshard__operation_restore_backup_collection.cpp
     schemeshard__operation_rmdir.cpp
-    schemeshard__operation_rotate_cdc_stream.cpp
     schemeshard__operation_side_effects.cpp
     schemeshard__operation_side_effects.h
     schemeshard__operation_split_merge.cpp
@@ -278,12 +273,6 @@ SRCS(
     schemeshard_restore_incremental__list.cpp
     schemeshard_bg_tasks__list.cpp
     schemeshard_billing_helpers.cpp
-    schemeshard_cdc_stream_common.cpp
-    schemeshard_cdc_stream_registry.cpp
-    schemeshard_cdc_stream_repository.cpp
-    schemeshard_cdc_stream_scan.cpp
-    schemeshard_cdc_stream_topic_partitioning.cpp
-    schemeshard_cdc_stream_topic_pipeline.cpp
     schemeshard_continuous_backup_cleaner.cpp
     schemeshard_incremental_restore_scan.cpp
     schemeshard_domain_links.cpp
@@ -411,6 +400,7 @@ PEERDIR(
     ydb/core/test_tablet
     ydb/core/tx
     ydb/core/tx/datashard
+    ydb/core/tx/schemeshard/cdc_stream
     ydb/core/tx/schemeshard/common
     ydb/core/tx/schemeshard/generated
     ydb/core/tx/schemeshard/index

@@ -1,6 +1,6 @@
-#include "schemeshard_cdc_stream_repository.h"
+#include "repository.h"
 
-#include "schemeshard_schema.h"
+#include <ydb/core/tx/schemeshard/schemeshard_schema.h>
 
 namespace NKikimr::NSchemeShard::NCdc {
 
