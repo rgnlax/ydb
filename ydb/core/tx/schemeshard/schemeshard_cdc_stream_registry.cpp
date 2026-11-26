@@ -30,6 +30,11 @@ bool TCdcStreamRegistry::HasCdcStream(const TPathId& streamPathId) const {
     return Self.CdcStreams.contains(streamPathId);
 }
 
+bool TCdcStreamRegistry::HasCdcStreamAlter(const TPathId& streamPathId) const {
+    const auto it = Self.CdcStreams.find(streamPathId);
+    return it != Self.CdcStreams.end() && it->second->AlterData;
+}
+
 std::optional<TCdcStreamSettings> TCdcStreamRegistry::FindCdcStreamSettings(const TPathId& streamPathId) const {
     const auto it = Self.CdcStreams.find(streamPathId);
     if (it == Self.CdcStreams.end()) {

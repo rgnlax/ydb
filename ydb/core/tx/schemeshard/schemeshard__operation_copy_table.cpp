@@ -345,12 +345,8 @@ public:
 
             context.OnComplete.PublishToSchemeBoard(OperationId, srcPathId);
 
-            if (txState->CdcPathId != InvalidPathId && context.SS->CdcStreams.contains(txState->CdcPathId)) {
-                auto stream = context.SS->CdcStreams.at(txState->CdcPathId);
-                if (stream->AlterData) {
-                    stream->FinishAlter();
-                    context.SS->CdcStreamRegistry.PersistCdcStream(db, txState->CdcPathId);
-                }
+            if (txState->CdcPathId != InvalidPathId && context.SS->CdcStreamRegistry.HasCdcStreamAlter(txState->CdcPathId)) {
+                context.SS->CdcStreamRegistry.FinishCdcStreamAlter(db, txState->CdcPathId);
             }
 
             for (const auto& [name, id] : srcPath->GetChildren()) {
