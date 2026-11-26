@@ -61,7 +61,7 @@
 #include <ydb/core/tx/replication/controller/public_events.h>
 #include <ydb/core/tx/scheme_board/events_schemeshard.h>
 #include <ydb/core/tx/scheme_cache/scheme_cache.h>
-#include <ydb/core/tx/schemeshard/cdc_stream/registry.h>
+#include <ydb/core/tx/schemeshard/cdc_stream/streams.h>
 #include <ydb/core/tx/schemeshard/index/build_index.h>
 #include <ydb/core/tx/sequenceshard/public/events.h>
 #include <ydb/core/tx/tx_allocator_client/actor_client.h>
@@ -308,8 +308,8 @@ public:
     ui32 MaxTTLShardsInFlight = 0;
 
     TDbRefMap<TTableIndexInfo::TPtr> Indexes{"Indexes", this, DbRefMaps};
-    TDbRefMap<TCdcStreamInfo::TPtr> CdcStreams{"CdcStreams", this, DbRefMaps};
-    NCdc::TCdcStreamRegistry CdcStreamRegistry{*this};
+    TDbRefMap<TCdcStreamInfo::TPtr> CdcStreamInfos{"CdcStreams", this, DbRefMaps};
+    NCdc::TCdcStreams CdcStreams{*this};
     TDbRefMap<TSequenceInfo::TPtr> Sequences{"Sequences", this, DbRefMaps};
     TDbRefMap<TReplicationInfo::TPtr> Replications{"Replications", this, DbRefMaps};
     TDbRefMap<TBlobDepotInfo::TPtr> BlobDepots{"BlobDepots", this, DbRefMaps};

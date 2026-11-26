@@ -271,7 +271,7 @@ public:
 
             if (!hasCdcChanges) {
                 for (const auto& [name, id] : srcPath->GetChildren()) {
-                    if (context.SS->CdcStreamRegistry.HasCdcStream(id) && context.SS->PathsById.contains(id)) {
+                    if (context.SS->CdcStreams.Find(id) && context.SS->PathsById.contains(id)) {
                         auto streamPath = context.SS->PathsById.at(id);
                         if (streamPath->IsCdcStream() &&
                             streamPath->PathState == TPathElement::EPathState::EPathStateDrop &&
@@ -345,21 +345,21 @@ public:
 
             context.OnComplete.PublishToSchemeBoard(OperationId, srcPathId);
 
-            if (txState->CdcPathId != InvalidPathId && context.SS->CdcStreamRegistry.HasCdcStreamAlter(txState->CdcPathId)) {
-                context.SS->CdcStreamRegistry.FinishCdcStreamAlter(db, txState->CdcPathId);
+            if (const auto stream = context.SS->CdcStreams.Find(txState->CdcPathId); stream && stream->AlterData) {
+                NCdcStreamAtTable::FinishCdcStreamAlter(*context.SS, db, txState->CdcPathId);
             }
 
             for (const auto& [name, id] : srcPath->GetChildren()) {
                 if (id == txState->CdcPathId) continue;
 
-                if (context.SS->CdcStreamRegistry.HasCdcStream(id)) {
+                if (context.SS->CdcStreams.Find(id)) {
                     auto streamPath = context.SS->PathsById.at(id);
 
                     if (streamPath->IsCdcStream() &&
                         streamPath->PathState == TPathElement::EPathState::EPathStateDrop &&
                         streamPath->DropTxId == OperationId.GetTxId()) {
 
-                        context.SS->CdcStreamRegistry.RemoveCdcStream(db, id);
+                        NCdcStreamAtTable::RemoveCdcStream(*context.SS, db, id);
 
                         Y_ABORT_UNLESS(!streamPath->Dropped());
                         streamPath->SetDropped(step, OperationId.GetTxId());

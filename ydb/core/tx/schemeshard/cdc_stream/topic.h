@@ -20,6 +20,7 @@ namespace NKikimr::NSchemeShard::NCdc {
         ui32 PartitionPerTablet = 2;
         bool ReplicationAutoPartitioning = false;
         bool KeyRangeAutoPartitioning = false;
+        bool TopicAutoPartitioning = false;
         ui32 MinPartitionCount = 0;
         ui32 MaxPartitionCount = 0;
     };

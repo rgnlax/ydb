@@ -1,5 +1,7 @@
 #include "topic_pipeline.h"
 
+#include "stream_changes.h"
+
 #include <ydb/core/tx/schemeshard/schemeshard_impl.h>
 #include <ydb/core/tx/schemeshard/schemeshard_path.h>
 
@@ -14,11 +16,11 @@ namespace NKikimr::NSchemeShard::NCdc {
 
 namespace {
 
-void SetCanSplitStrategy(NKikimrPQ::TPQTabletConfig& pqConfig, const TCdcStreamTopicAutoPartitioning& autoPartitioning) {
+void SetCanSplitStrategy(NKikimrPQ::TPQTabletConfig& pqConfig, ui32 minPartitionCount, ui32 maxPartitionCount) {
     auto* ps = pqConfig.MutablePartitionStrategy();
     ps->SetPartitionStrategyType(::NKikimrPQ::TPQTabletConfig_TPartitionStrategyType::TPQTabletConfig_TPartitionStrategyType_CAN_SPLIT);
-    ps->SetMinPartitionCount(autoPartitioning.MinPartitionCount);
-    ps->SetMaxPartitionCount(autoPartitioning.MaxPartitionCount);
+    ps->SetMinPartitionCount(minPartitionCount);
+    ps->SetMaxPartitionCount(maxPartitionCount);
     ps->SetScaleThresholdSeconds(30);
 }
 
@@ -58,34 +60,40 @@ void AddPartitionKeySchemaAndBoundaries(
     }
 }
 
-TString MakeFullKeyBound(const TString& bound, size_t keySize) {
-    const TSerializedCellVec key(bound);
-    TVector<TCell> cells(key.GetCells().begin(), key.GetCells().end());
-    cells.resize(keySize);
-    return TSerializedCellVec::Serialize(cells);
-}
-
 } // anonymous
 
-TCdcStreamTopicPipeline::TCdcStreamTopicPipeline(std::unique_ptr<ICdcStreamTopicPartitioning> partitioning)
-    : Partitioning(std::move(partitioning))
+TCdcPqPartParams MakeCdcStreamTopicShape(
+        const TCdcStreamFeatures& features,
+        const NKikimrSchemeOp::TCreateCdcStream& op,
+        ui64 tablePartitionCount,
+        ui64 maxShardsInPath)
 {
+    for (const auto& feature : features) {
+        if (auto shape = feature->OnCreateTopic(op, tablePartitionCount, maxShardsInPath)) {
+            return *shape;
+        }
+    }
+
+    return TCdcPqPartParams{
+        .TotalGroupCount = static_cast<ui32>(op.HasTopicPartitions() ? op.GetTopicPartitions() : tablePartitionCount),
+    };
 }
 
-NKikimrSchemeOp::TPersQueueGroupDescription TCdcStreamTopicPipeline::MakePersQueueGroup(
+NKikimrSchemeOp::TPersQueueGroupDescription MakeCdcStreamTopic(
+        const TCdcStreamFeatures& features,
         const NKikimrSchemeOp::TCreateCdcStream& op,
         const TString& streamName,
         const TString& topicPath,
         const TTableInfo& table,
         const TVector<TString>& boundaries,
-        ui64 maxShardsInPath) const
+        ui64 maxShardsInPath)
 {
-    const auto params = Partitioning->MakePartParams(op, table.GetPartitions().size(), maxShardsInPath);
+    const auto shape = MakeCdcStreamTopicShape(features, op, table.GetPartitions().size(), maxShardsInPath);
 
     NKikimrSchemeOp::TPersQueueGroupDescription desc;
     desc.SetName("streamImpl");
-    desc.SetPartitionPerTablet(params.PartitionPerTablet);
-    desc.SetTotalGroupCount(params.TotalGroupCount);
+    desc.SetPartitionPerTablet(shape.PartitionPerTablet);
+    desc.SetTotalGroupCount(shape.TotalGroupCount);
 
     auto& pqConfig = *desc.MutablePQTabletConfig();
     pqConfig.SetTopicName(streamName);
@@ -98,15 +106,15 @@ NKikimrSchemeOp::TPersQueueGroupDescription TCdcStreamTopicPipeline::MakePersQue
     partitionConfig.SetBurstSize(1_MB); // TODO: configurable burst
     partitionConfig.SetMaxCountInPartition(Max<i32>());
 
-    if (const auto autoPartitioning = Partitioning->MakeAutoPartitioning(op, params)) {
-        SetCanSplitStrategy(pqConfig, *autoPartitioning);
+    if (shape.ReplicationAutoPartitioning || shape.KeyRangeAutoPartitioning || shape.TopicAutoPartitioning) {
+        SetCanSplitStrategy(pqConfig, shape.MinPartitionCount, shape.MaxPartitionCount);
     }
 
-    if (Partitioning->IsSplitByTableKey()) {
+    if (shape.KeyRangeAutoPartitioning) {
         pqConfig.SetSplitByPartitionKey(true);
     }
 
-    if (Partitioning->IsPartitionedByTableKey()) {
+    if (!shape.ReplicationAutoPartitioning && !shape.TopicAutoPartitioning) {
         AddPartitionKeySchemaAndBoundaries(desc, table, boundaries);
     }
 
@@ -114,35 +122,41 @@ NKikimrSchemeOp::TPersQueueGroupDescription TCdcStreamTopicPipeline::MakePersQue
 }
 
 NKikimrPQ::TBootstrapConfig MakeCdcStreamTopicSources(
+        const TCdcStreamFeatures& features,
+        const TCdcStreamInfo* stream,
         const TTableInfo& table,
-        const THashMap<TShardIdx, TShardInfo>& shardInfos,
-        bool splitByTableKey)
+        const THashMap<TShardIdx, TShardInfo>& shardInfos)
 {
-    NKikimrPQ::TBootstrapConfig bootstrapConfig;
-    const auto& partitions = table.GetPartitions();
-    for (size_t i = 0; i < partitions.size(); ++i) {
-        const auto* shardInfo = shardInfos.FindPtr(partitions[i]->ShardIdx);
+    NKikimrPQ::TBootstrapConfig sources;
+    for (const auto* partition : table.GetPartitions()) {
+        const auto* shardInfo = shardInfos.FindPtr(partition->ShardIdx);
         Y_ABORT_UNLESS(shardInfo != nullptr);
 
-        auto& mg = *bootstrapConfig.AddExplicitMessageGroups();
+        auto& mg = *sources.AddExplicitMessageGroups();
         mg.SetId(NPQ::NSourceIdEncoding::EncodeSimple(ToString(shardInfo->TabletID)));
-
-        // Pass the DataShard key range to a key range CDC topic: PQ registers the source only in its partitions
-        if (splitByTableKey) {
-            if (i > 0) {
-                mg.MutableKeyRange()->SetFromBound(MakeFullKeyBound(partitions[i - 1]->EndOfRange, table.KeyColumnIds.size()));
-            }
-            if (i + 1 < partitions.size()) {
-                mg.MutableKeyRange()->SetToBound(MakeFullKeyBound(partitions[i]->EndOfRange, table.KeyColumnIds.size()));
-            }
-        }
 
         //NOTE: Other CDC topics get no KeyRange on the group: nothing consumes the key ranges on the pqtablet side.
         // Routing is datashard-side over the topic partitioning, split continuity is
         // the change-exchange re-registration, and the table split/merge re-registration
         // produces rangeless ids anyway.
     }
-    return bootstrapConfig;
+
+    if (stream) {
+        for (const auto& feature : features) {
+            feature->OnTopicSources(*stream, table, sources);
+        }
+    }
+
+    return sources;
+}
+
+TCdcPqPartParams MakeCdcPqPartParams(
+        const NKikimrSchemeOp::TCreateCdcStream& op,
+        ui64 tablePartitionCount,
+        ui64 maxShardsInPath,
+        const TFeatureFlags& featureFlags)
+{
+    return MakeCdcStreamTopicShape(MakeCdcStreamFeatures(featureFlags), op, tablePartitionCount, maxShardsInPath);
 }
 
 std::optional<NKikimrPQ::TBootstrapConfig> MakeCdcStreamTopicBootstrapConfig(
@@ -160,9 +174,12 @@ std::optional<NKikimrPQ::TBootstrapConfig> MakeCdcStreamTopicBootstrapConfig(
     Y_ABORT_UNLESS(context.SS->Tables.contains(tablePath.Base()->PathId));
     auto table = context.SS->Tables.at(tablePath.Base()->PathId);
 
-    const auto heartbeatMode = context.SS->CdcStreamRegistry.FindPendingCdcStreamHeartbeatMode(streamPath.Base()->PathId)
-        .value_or(NKikimrSchemeOp::ECdcStreamHeartbeatModeDirect);
-    return MakeCdcStreamTopicSources(*table, context.SS->ShardInfos, IsSplitByTableKey(heartbeatMode));
+    const auto stream = FindPendingCdcStream(*context.SS, streamPath.Base()->PathId);
+    return MakeCdcStreamTopicSources(
+        MakeCdcStreamFeatures(AppData()->FeatureFlags),
+        stream.Get(),
+        *table,
+        context.SS->ShardInfos);
 }
 
 } // namespace NKikimr::NSchemeShard::NCdc

@@ -46,11 +46,11 @@ void TStorageChanges::Apply(TSchemeShard* ss, NTabletFlatExecutor::TTransactionC
     }
 
     for (const auto& pId : AlterCdcStreams) {
-        ss->CdcStreamRegistry.PersistCdcStreamAlterData(db, pId);
+        ss->CdcStreams.PersistAlterData(db, pId);
     }
 
     for (const auto& pId : ApplyCdcStreams) {
-        ss->CdcStreamRegistry.PersistCdcStream(db, pId);
+        ss->CdcStreams.Persist(db, pId);
     }
 
     for (const auto& pId : Tables) {

@@ -8,6 +8,7 @@
 #include <ydb/core/scheme/scheme_types_proto.h>
 
 #include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
+#include "stream_changes.h"
 #include "stream_factory.h"
 #include "topic_pipeline.h"
 
@@ -56,15 +57,15 @@ public:
         Y_ABORT_UNLESS(context.SS->PathsById.contains(pathId));
         auto path = context.SS->PathsById.at(pathId);
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(pathId));
-        auto stream = context.SS->CdcStreams.at(pathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(pathId));
+        auto stream = context.SS->CdcStreamInfos.at(pathId);
 
         NIceDb::TNiceDb db(context.GetDB());
 
         path->StepCreated = step;
         context.SS->PersistCreateStep(db, pathId, step);
 
-        context.SS->CdcStreamRegistry.FinishCdcStreamCreate(db, pathId);
+        NCdc::FinishCdcStreamCreate(*context.SS, db, pathId);
 
         context.SS->TabletCounters->Simple()[COUNTER_CDC_STREAMS_COUNT].Add(1);
         context.SS->ClearDescribePathCaches(path);
@@ -376,7 +377,7 @@ public:
         streamPath.Base()->PathType = TPathElement::EPathType::EPathTypeCdcStream;
         streamPath.Base()->UserAttrs->AlterData = userAttrs;
 
-        context.SS->CdcStreamRegistry.AddCdcStream(context, pathId, stream);
+        NCdc::AddCdcStream(context, pathId, stream);
 
         streamPath.DomainInfo()->IncPathsInside(context.SS);
         IncAliveChildrenSafeWithUndo(OperationId, tablePath, context); // for correct discard of ChildrenExist prop
@@ -486,8 +487,8 @@ public:
             }
 
             Y_ABORT_UNLESS(childPath->IsCdcStream() && !childPath->Dropped());
-            Y_ABORT_UNLESS(context.SS->CdcStreams.contains(childPathId));
-            auto stream = context.SS->CdcStreams.at(childPathId);
+            Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(childPathId));
+            auto stream = context.SS->CdcStreamInfos.at(childPathId);
 
             Y_ABORT_UNLESS(stream->State == TCdcStreamInfo::EState::ECdcStreamStateScan);
             Y_VERIFY_S(!streamPathId, "Too many cdc streams are planned to fill with initial scan"
@@ -710,8 +711,8 @@ void DoCreatePqPart(
     outTx.SetFailOnExist(!acceptExisted);
 
     const ui64 maxShardsInPath = streamPath.DomainInfo()->GetSchemeLimits().MaxShardsInPath;
-    const TCdcStreamTopicPipeline topicPipeline(MakeCdcStreamTopicPartitioning(op, AppData()->FeatureFlags));
-    *outTx.MutableCreatePersQueueGroup() = topicPipeline.MakePersQueueGroup(
+    *outTx.MutableCreatePersQueueGroup() = MakeCdcStreamTopic(
+        MakeCdcStreamFeatures(AppData()->FeatureFlags),
         op,
         streamName,
         streamPath.Child("streamImpl").PathString(),

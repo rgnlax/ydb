@@ -174,7 +174,7 @@ TVector<ISubOperation::TPtr> CreateBackupBackupCollection(TOperationId opId, con
                 if (childName.EndsWith("_continuousBackupImpl")) {
                     TPath child = sPath.Child(childName);
                     if (!child.IsDeleted() && child.IsCdcStream()) {
-                        if (const auto streamInfo = context.SS->CdcStreamRegistry.FindCdcStreamSettings(childId)) {
+                        if (const auto streamInfo = context.SS->CdcStreams.Find(childId)) {
                             if (streamInfo->Format == NKikimrSchemeOp::ECdcStreamFormatProto) {
                                 oldStreamName = childName;
                             }
@@ -217,7 +217,7 @@ TVector<ISubOperation::TPtr> CreateBackupBackupCollection(TOperationId opId, con
                             if (childNameInIndex.EndsWith("_continuousBackupImpl")) {
                                 TPath child = indexTablePath.Child(childNameInIndex);
                                 if (!child.IsDeleted() && child.IsCdcStream()) {
-                                    if (const auto streamInfo = context.SS->CdcStreamRegistry.FindCdcStreamSettings(childIdInIndex)) {
+                                    if (const auto streamInfo = context.SS->CdcStreams.Find(childIdInIndex)) {
                                         if (streamInfo->Format == NKikimrSchemeOp::ECdcStreamFormatProto) {
                                             oldIndexStreamName = childNameInIndex;
                                         }

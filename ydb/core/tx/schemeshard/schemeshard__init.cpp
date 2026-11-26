@@ -3498,7 +3498,7 @@ struct TSchemeShard::TTxInit : public TTransactionBase<TSchemeShard> {
 
         // Read CdcStream and CdcStreamAlterData
         {
-            auto [ready, scansToResume] = Self->CdcStreamRegistry.LoadCdcStreams(db);
+            auto [ready, scansToResume] = Self->CdcStreams.Load(db);
             if (!ready) {
                 return false;
             }
@@ -3523,10 +3523,10 @@ struct TSchemeShard::TTxInit : public TTransactionBase<TSchemeShard> {
                 );
                 auto status = rowset.GetValue<Schema::CdcStreamScanShardStatus::Status>();
 
-                Y_VERIFY_S(Self->CdcStreams.contains(pathId), "Cdc stream not found"
+                Y_VERIFY_S(Self->CdcStreamInfos.contains(pathId), "Cdc stream not found"
                     << ": pathId# " << pathId);
 
-                auto stream = Self->CdcStreams.at(pathId);
+                auto stream = Self->CdcStreamInfos.at(pathId);
                 stream->ScanShards.emplace(shardIdx, status);
 
                 if (status != NKikimrTxDataShard::TEvCdcStreamScanResponse::DONE) {

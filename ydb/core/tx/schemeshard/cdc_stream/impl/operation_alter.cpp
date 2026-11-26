@@ -8,6 +8,7 @@
 #include <ydb/core/scheme/scheme_types_proto.h>
 
 #include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
+#include "stream_changes.h"
 
 #include <ydb/library/actors/core/log.h>
 
@@ -57,12 +58,12 @@ public:
         Y_ABORT_UNLESS(context.SS->PathsById.contains(pathId));
         auto path = context.SS->PathsById.at(pathId);
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(pathId));
-        auto stream = context.SS->CdcStreams.at(pathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(pathId));
+        auto stream = context.SS->CdcStreamInfos.at(pathId);
 
         NIceDb::TNiceDb db(context.GetDB());
 
-        context.SS->CdcStreamRegistry.FinishCdcStreamAlter(db, pathId);
+        NCdcStreamAtTable::FinishCdcStreamAlter(*context.SS, db, pathId);
 
         context.SS->ClearDescribePathCaches(path);
         context.OnComplete.PublishToSchemeBoard(OperationId, pathId);
@@ -164,8 +165,8 @@ public:
             }
         }
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(streamPath.Base()->PathId));
-        auto stream = context.SS->CdcStreams.at(streamPath.Base()->PathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(streamPath.Base()->PathId));
+        auto stream = context.SS->CdcStreamInfos.at(streamPath.Base()->PathId);
 
         TCdcStreamInfo::EState requiredState = TCdcStreamInfo::EState::ECdcStreamStateInvalid;
         TCdcStreamInfo::EState newState = TCdcStreamInfo::EState::ECdcStreamStateInvalid;
@@ -204,7 +205,7 @@ public:
         context.DbChanges.PersistPath(streamPath.Base()->PathId);
         context.DbChanges.PersistTxState(OperationId);
 
-        auto streamAlter = context.SS->CdcStreamRegistry.BeginCdcStreamAlter(context, streamPath.Base()->PathId);
+        auto streamAlter = NCdc::BeginCdcStreamAlter(context, streamPath.Base()->PathId);
         streamAlter->State = newState;
 
         Y_ABORT_UNLESS(!context.SS->FindTx(OperationId));
@@ -263,8 +264,8 @@ protected:
                 continue;
             }
 
-            Y_ABORT_UNLESS(context.SS->CdcStreams.contains(childPathId));
-            auto stream = context.SS->CdcStreams.at(childPathId);
+            Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(childPathId));
+            auto stream = context.SS->CdcStreamInfos.at(childPathId);
 
             Y_VERIFY_S(!found, "Too many cdc streams are planned to alter"
                 << ": found# " << TPathId::FromProto(notice.GetStreamDescription().GetPathId())
@@ -272,7 +273,7 @@ protected:
             found = true;
 
             Y_ABORT_UNLESS(stream->AlterData);
-            *notice.MutableStreamDescription() = context.SS->CdcStreamRegistry.MakeCdcStreamAlterDescription(childPathId, childName);
+            *notice.MutableStreamDescription() = NCdc::DescribeCdcStreamAlter(*context.SS, childPathId, childName);
         }
     }
 
@@ -451,8 +452,8 @@ public:
 
         Y_ABORT_UNLESS(table->AlterVersion != 0);
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(streamPath.Base()->PathId));
-        auto stream = context.SS->CdcStreams.at(streamPath.Base()->PathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(streamPath.Base()->PathId));
+        auto stream = context.SS->CdcStreamInfos.at(streamPath.Base()->PathId);
 
         Y_ABORT_UNLESS(stream->AlterVersion != 0);
         Y_ABORT_UNLESS(stream->AlterData);

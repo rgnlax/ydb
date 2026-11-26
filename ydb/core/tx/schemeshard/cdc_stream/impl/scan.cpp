@@ -157,7 +157,7 @@ private:
             {"streamPathId", streamPathId},
         );
 
-        if (!Self->CdcStreams.contains(streamPathId)) {
+        if (!Self->CdcStreamInfos.contains(streamPathId)) {
             YDB_LOG_WARN_CTX(ctx, "[CdcStreamScan] Cannot run",
                 {"streamPathId", streamPathId},
                 {"reason", "stream doesn't exist"},
@@ -165,7 +165,7 @@ private:
             return true;
         }
 
-        auto streamInfo = Self->CdcStreams.at(streamPathId);
+        auto streamInfo = Self->CdcStreamInfos.at(streamPathId);
         if (streamInfo->State != TCdcStreamInfo::EState::ECdcStreamStateScan) {
             YDB_LOG_WARN_CTX(ctx, "[CdcStreamScan] Cannot run",
                 {"streamPathId", streamPathId},
@@ -242,7 +242,7 @@ private:
         );
 
         const auto streamPathId = TPathId::FromProto(record.GetStreamPathId());
-        if (!Self->CdcStreams.contains(streamPathId)) {
+        if (!Self->CdcStreamInfos.contains(streamPathId)) {
             YDB_LOG_WARN_CTX(ctx, "[CdcStreamScan] Cannot process response",
                 {"streamPathId", streamPathId},
                 {"reason", "stream doesn't exist"},
@@ -250,7 +250,7 @@ private:
             return true;
         }
 
-        auto streamInfo = Self->CdcStreams.at(streamPathId);
+        auto streamInfo = Self->CdcStreamInfos.at(streamPathId);
         if (streamInfo->State != TCdcStreamInfo::EState::ECdcStreamStateScan) {
             YDB_LOG_WARN_CTX(ctx, "[CdcStreamScan] Cannot process response",
                 {"streamPathId", streamPathId},
@@ -348,7 +348,7 @@ private:
             {"tabletId", tabletId},
         );
 
-        if (!Self->CdcStreams.contains(streamPathId)) {
+        if (!Self->CdcStreamInfos.contains(streamPathId)) {
             YDB_LOG_WARN_CTX(ctx, "[CdcStreamScan] Cannot retry",
                 {"streamPathId", streamPathId},
                 {"reason", "stream doesn't exist"},
@@ -356,7 +356,7 @@ private:
             return true;
         }
 
-        auto streamInfo = Self->CdcStreams.at(streamPathId);
+        auto streamInfo = Self->CdcStreamInfos.at(streamPathId);
         if (streamInfo->State != TCdcStreamInfo::EState::ECdcStreamStateScan) {
             YDB_LOG_WARN_CTX(ctx, "[CdcStreamScan] Cannot retry",
                 {"streamPathId", streamPathId},

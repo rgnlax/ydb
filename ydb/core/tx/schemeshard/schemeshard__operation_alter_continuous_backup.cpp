@@ -96,8 +96,7 @@ bool CreateAlterContinuousBackup(TOperationId opId, const TTxTransaction& tx, TO
         if (childName.EndsWith("_continuousBackupImpl")) {
             TPath childPath = tablePath.Child(childName);
             if (!childPath.IsDeleted() && childPath.IsCdcStream()) {
-                if (context.SS->CdcStreams.contains(childPathId)) {
-                    const auto& streamInfo = context.SS->CdcStreams.at(childPathId);
+                if (const auto streamInfo = context.SS->CdcStreams.Find(childPathId)) {
                     if (streamInfo->Format == NKikimrSchemeOp::ECdcStreamFormatProto) {
                         lastStreamName = childName;
                     }

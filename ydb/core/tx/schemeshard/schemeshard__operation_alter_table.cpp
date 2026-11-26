@@ -860,7 +860,7 @@ public:
                     continue;
                 }
 
-                const auto stream = context.SS->CdcStreamRegistry.FindCdcStreamSettings(childPathId);
+                const auto stream = context.SS->CdcStreams.Find(childPathId);
                 Y_ABORT_UNLESS(stream);
                 hasSchemaCdcStream |= stream->SchemaChanges;
 

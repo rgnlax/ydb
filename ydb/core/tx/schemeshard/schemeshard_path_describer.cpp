@@ -571,7 +571,7 @@ void TPathDescriber::DescribeTable(const TActorContext& ctx, TPathId pathId, TPa
             );
             break;
         case NKikimrSchemeOp::EPathTypeCdcStream:
-            *entry->AddCdcStreams() = Self->CdcStreamRegistry.MakeCdcStreamDescription(childPathId, childName);
+            *entry->AddCdcStreams() = Self->CdcStreams.Describe(childPathId, childName);
             break;
         case NKikimrSchemeOp::EPathTypeSequence:
             Self->DescribeSequence(childPathId, childName, *entry->AddSequences(), returnSetVal);
@@ -873,7 +873,7 @@ void TPathDescriber::DescribeTableIndex(const TPath& path) {
 
 void TPathDescriber::DescribeCdcStream(const TPath& path) {
     *Result->Record.MutablePathDescription()->MutableCdcStreamDescription() =
-        Self->CdcStreamRegistry.MakeCdcStreamDescription(path.Base()->PathId, path.Base()->Name);
+        Self->CdcStreams.Describe(path.Base()->PathId, path.Base()->Name);
     DescribeChildren(path);
 }
 

@@ -5533,7 +5533,9 @@ NKikimrSchemeOp::TPathVersion TSchemeShard::GetPathVersion(const TPath& path) co
                 break;
             }
             case NKikimrSchemeOp::EPathType::EPathTypeCdcStream: {
-                result.SetCdcStreamVersion(CdcStreamRegistry.GetCdcStreamVersion(pathId));
+                const auto stream = CdcStreams.Find(pathId);
+                Y_ABORT_UNLESS(stream);
+                result.SetCdcStreamVersion(stream->AlterVersion);
                 generalVersion += result.GetCdcStreamVersion();
                 break;
             }
@@ -8627,7 +8629,7 @@ void TSchemeShard::FillTableDescriptionForShardIdx(
             }
 
             case NKikimrSchemeOp::EPathTypeCdcStream: {
-                *tableDescr->MutableCdcStreams()->Add() = CdcStreamRegistry.MakeCdcStreamDescription(childPathId, childName);
+                *tableDescr->MutableCdcStreams()->Add() = CdcStreams.Describe(childPathId, childName);
                 break;
             }
 
