@@ -63,12 +63,10 @@ public:
         newStreamPath->StepCreated = step;
         context.SS->PersistCreateStep(db, newStreamPathId, step);
 
-        context.SS->PersistCdcStream(db, newStreamPathId);
-        context.SS->CdcStreams.Set(newStreamPathId, newStream->AlterData);
+        context.SS->CdcStreamRegistry.FinishCdcStreamCreate(db, newStreamPathId);
         context.SS->TabletCounters->Simple()[COUNTER_CDC_STREAMS_COUNT].Add(1);
 
-        context.SS->PersistCdcStream(db, oldStreamPathId);
-        context.SS->CdcStreams.at(oldStreamPathId)->FinishAlter();
+        context.SS->CdcStreamRegistry.FinishCdcStreamAlter(db, oldStreamPathId);
 
         context.SS->ClearDescribePathCaches(oldStreamPath);
         context.SS->ClearDescribePathCaches(newStreamPath);
@@ -384,15 +382,14 @@ public:
             return result;
         }
 
-        const auto [heartbeatMode, heartbeatModeError] = ChooseHeartbeatMode(newStreamOp, AppData()->FeatureFlags);
-        if (!heartbeatMode) {
-            result->SetError(NKikimrScheme::StatusInvalidParameter, heartbeatModeError);
+        const auto [newStream, newStreamError] = MakeCdcStream(newStreamOp, AppData()->FeatureFlags);
+        if (!newStream) {
+            result->SetError(NKikimrScheme::StatusInvalidParameter, newStreamError);
             return result;
         }
 
         auto guard = context.DbGuard();
         context.MemChanges.GrabPath(context.SS, oldStreamPath.Base()->PathId);
-        context.MemChanges.GrabCdcStream(context.SS, oldStreamPath.Base()->PathId);
         context.MemChanges.GrabNewTxState(context.SS, OperationId);
 
         const auto pathId = context.SS->AllocatePathId();
@@ -400,24 +397,17 @@ public:
         context.MemChanges.GrabPath(context.SS, tablePath.Base()->PathId);
         context.MemChanges.GrabNewTxState(context.SS, OperationId);
         context.MemChanges.GrabDomain(context.SS, newStreamPath.GetPathIdForDomain());
-        context.MemChanges.GrabNewCdcStream(context.SS, pathId);
 
         context.DbChanges.PersistPath(oldStreamPath.Base()->PathId);
-        context.DbChanges.PersistAlterCdcStream(oldStreamPath.Base()->PathId);
         context.DbChanges.PersistTxState(OperationId);
 
         context.DbChanges.PersistPath(pathId);
         context.DbChanges.PersistPath(tablePath.Base()->PathId);
         context.DbChanges.PersistApplyUserAttrs(pathId);
-        context.DbChanges.PersistAlterCdcStream(pathId);
         context.DbChanges.PersistTxState(OperationId);
 
-        auto streamAlter = oldStream->CreateNextVersion();
-        Y_ABORT_UNLESS(streamAlter);
+        auto streamAlter = context.SS->CdcStreamRegistry.BeginCdcStreamAlter(context, oldStreamPath.Base()->PathId);
         streamAlter->State = newState;
-
-        auto newStream = TCdcStreamInfo::Create(newStreamDesc);
-        Y_ABORT_UNLESS(newStream);
 
         newStreamPath.MaterializeLeaf(owner, pathId);
         result->SetPathId(pathId.LocalPathId);
@@ -437,9 +427,7 @@ public:
         newStreamPath.Base()->PathType = TPathElement::EPathType::EPathTypeCdcStream;
         newStreamPath.Base()->UserAttrs->AlterData = userAttrs;
 
-        context.SS->CdcStreams.Set(pathId, newStream);
-
-        newStream->AlterData->HeartbeatMode = *heartbeatMode;
+        context.SS->CdcStreamRegistry.AddCdcStream(context, pathId, newStream);
 
         newStreamPath.DomainInfo()->IncPathsInside(context.SS);
         IncAliveChildrenSafeWithUndo(OperationId, tablePath, context); // for correct discard of ChildrenExist prop
@@ -497,7 +485,7 @@ protected:
         auto newStream = context.SS->CdcStreams.at(newStreamPathId);
 
         Y_ABORT_UNLESS(newStream->AlterData);
-        context.SS->DescribeCdcStream(newStreamPathId, newStreamPath->Name, newStream->AlterData, *notice.MutableNewStreamDescription());
+        *notice.MutableNewStreamDescription() = context.SS->CdcStreamRegistry.MakeCdcStreamAlterDescription(newStreamPathId, newStreamPath->Name);
     }
 
 public:

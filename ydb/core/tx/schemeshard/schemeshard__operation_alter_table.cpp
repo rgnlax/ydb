@@ -860,8 +860,8 @@ public:
                     continue;
                 }
 
-                Y_ABORT_UNLESS(context.SS->CdcStreams.contains(childPathId));
-                const auto& stream = context.SS->CdcStreams.at(childPathId);
+                const auto stream = context.SS->CdcStreamRegistry.FindCdcStreamSettings(childPathId);
+                Y_ABORT_UNLESS(stream);
                 hasSchemaCdcStream |= stream->SchemaChanges;
 
                 if (!childPath->AsyncReplication.IsDefined()) {

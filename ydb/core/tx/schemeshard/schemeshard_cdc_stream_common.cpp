@@ -117,7 +117,7 @@ void FillNotice(const TPathId& pathId, TOperationContext& context, NKikimrTxData
         found = true;
 
         Y_ABORT_UNLESS(stream->AlterData);
-        context.SS->DescribeCdcStream(childPathId, childName, stream->AlterData, *notice.MutableStreamDescription());
+        *notice.MutableStreamDescription() = context.SS->CdcStreamRegistry.MakeCdcStreamAlterDescription(childPathId, childName);
 
         if (stream->AlterData->State == TCdcStreamInfo::EState::ECdcStreamStateScan) {
             notice.SetSnapshotName("ChangefeedInitialScan");

@@ -57,8 +57,7 @@ public:
 
         NIceDb::TNiceDb db(context.GetDB());
 
-        context.SS->PersistCdcStream(db, pathId);
-        context.SS->CdcStreams.at(pathId)->FinishAlter();
+        context.SS->CdcStreamRegistry.FinishCdcStreamAlter(db, pathId);
 
         context.SS->ClearDescribePathCaches(path);
         context.OnComplete.PublishToSchemeBoard(OperationId, pathId);
@@ -195,15 +194,12 @@ public:
 
         auto guard = context.DbGuard();
         context.MemChanges.GrabPath(context.SS, streamPath.Base()->PathId);
-        context.MemChanges.GrabCdcStream(context.SS, streamPath.Base()->PathId);
         context.MemChanges.GrabNewTxState(context.SS, OperationId);
 
         context.DbChanges.PersistPath(streamPath.Base()->PathId);
-        context.DbChanges.PersistAlterCdcStream(streamPath.Base()->PathId);
         context.DbChanges.PersistTxState(OperationId);
 
-        auto streamAlter = stream->CreateNextVersion();
-        Y_ABORT_UNLESS(streamAlter);
+        auto streamAlter = context.SS->CdcStreamRegistry.BeginCdcStreamAlter(context, streamPath.Base()->PathId);
         streamAlter->State = newState;
 
         Y_ABORT_UNLESS(!context.SS->FindTx(OperationId));
@@ -271,7 +267,7 @@ protected:
             found = true;
 
             Y_ABORT_UNLESS(stream->AlterData);
-            context.SS->DescribeCdcStream(childPathId, childName, stream->AlterData, *notice.MutableStreamDescription());
+            *notice.MutableStreamDescription() = context.SS->CdcStreamRegistry.MakeCdcStreamAlterDescription(childPathId, childName);
         }
     }
 

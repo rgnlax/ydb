@@ -54,7 +54,7 @@ public:
         NIceDb::TNiceDb db(context.GetDB());
 
         context.SS->PersistDropStep(db, pathId, step, OperationId);
-        context.SS->PersistRemoveCdcStream(db, pathId);
+        context.SS->CdcStreamRegistry.RemoveCdcStream(db, pathId);
 
         Y_ABORT_UNLESS(context.SS->PathsById.contains(path->ParentPathId));
         auto parent = context.SS->PathsById.at(path->ParentPathId);

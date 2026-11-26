@@ -7,6 +7,7 @@
 #include "schemeshard__operation.h"
 #include "schemeshard__stats.h"
 #include "schemeshard_backup.h"
+#include "schemeshard_cdc_stream_registry.h"
 #include "schemeshard_set_column_constraint.h"
 #include "schemeshard_domain_links.h"
 #include "schemeshard_export.h"
@@ -308,6 +309,7 @@ public:
 
     TDbRefMap<TTableIndexInfo::TPtr> Indexes{"Indexes", this, DbRefMaps};
     TDbRefMap<TCdcStreamInfo::TPtr> CdcStreams{"CdcStreams", this, DbRefMaps};
+    NCdc::TCdcStreamRegistry CdcStreamRegistry{*this};
     TDbRefMap<TSequenceInfo::TPtr> Sequences{"Sequences", this, DbRefMaps};
     TDbRefMap<TReplicationInfo::TPtr> Replications{"Replications", this, DbRefMaps};
     TDbRefMap<TBlobDepotInfo::TPtr> BlobDepots{"BlobDepots", this, DbRefMaps};
@@ -1453,8 +1455,6 @@ public:
     void DescribeTableIndex(const TPathId& pathId, const TString& name, TTableIndexInfo::TPtr indexInfo,
         bool fillConfig, bool fillBoundaries, NKikimrSchemeOp::TIndexDescription& entry
     ) const;
-    void DescribeCdcStream(const TPathId& pathId, const TString& name, NKikimrSchemeOp::TCdcStreamDescription& desc);
-    void DescribeCdcStream(const TPathId& pathId, const TString& name, TCdcStreamInfo::TPtr info, NKikimrSchemeOp::TCdcStreamDescription& desc);
     void DescribeSequence(const TPathId& pathId, const TString& name,
         NKikimrSchemeOp::TSequenceDescription& desc, bool fillSetVal = false);
     void DescribeSequence(const TPathId& pathId, const TString& name, TSequenceInfo::TPtr info,

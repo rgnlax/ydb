@@ -60,8 +60,7 @@ public:
         path->StepCreated = step;
         context.SS->PersistCreateStep(db, pathId, step);
 
-        context.SS->PersistCdcStream(db, pathId);
-        context.SS->CdcStreams.Set(pathId, stream->AlterData);
+        context.SS->CdcStreamRegistry.FinishCdcStreamCreate(db, pathId);
 
         context.SS->TabletCounters->Simple()[COUNTER_CDC_STREAMS_COUNT].Add(1);
         context.SS->ClearDescribePathCaches(path);
@@ -337,14 +336,11 @@ public:
             return result;
         }
 
-        const auto [heartbeatMode, heartbeatModeError] = ChooseHeartbeatMode(op, AppData()->FeatureFlags);
-        if (!heartbeatMode) {
-            result->SetError(NKikimrScheme::StatusInvalidParameter, heartbeatModeError);
+        const auto [stream, streamError] = MakeCdcStream(op, AppData()->FeatureFlags);
+        if (!stream) {
+            result->SetError(NKikimrScheme::StatusInvalidParameter, streamError);
             return result;
         }
-
-        auto stream = TCdcStreamInfo::Create(streamDesc);
-        Y_ABORT_UNLESS(stream);
 
         auto guard = context.DbGuard();
         const auto pathId = context.SS->AllocatePathId();
@@ -352,12 +348,10 @@ public:
         context.MemChanges.GrabPath(context.SS, tablePath.Base()->PathId);
         context.MemChanges.GrabNewTxState(context.SS, OperationId);
         context.MemChanges.GrabDomain(context.SS, streamPath.GetPathIdForDomain());
-        context.MemChanges.GrabNewCdcStream(context.SS, pathId);
 
         context.DbChanges.PersistPath(pathId);
         context.DbChanges.PersistPath(tablePath.Base()->PathId);
         context.DbChanges.PersistApplyUserAttrs(pathId);
-        context.DbChanges.PersistAlterCdcStream(pathId);
         context.DbChanges.PersistTxState(OperationId);
 
         streamPath.MaterializeLeaf(owner, pathId);
@@ -378,9 +372,7 @@ public:
         streamPath.Base()->PathType = TPathElement::EPathType::EPathTypeCdcStream;
         streamPath.Base()->UserAttrs->AlterData = userAttrs;
 
-        context.SS->CdcStreams.Set(pathId, stream);
-
-        stream->AlterData->HeartbeatMode = *heartbeatMode;
+        context.SS->CdcStreamRegistry.AddCdcStream(context, pathId, stream);
 
         streamPath.DomainInfo()->IncPathsInside(context.SS);
         IncAliveChildrenSafeWithUndo(OperationId, tablePath, context); // for correct discard of ChildrenExist prop
