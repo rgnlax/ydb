@@ -2,6 +2,7 @@
 
 #include "schemeshard__operation_common.h"
 #include "schemeshard__operation_part.h"
+#include "schemeshard_cdc_stream_topic_layout.h"
 #include "schemeshard_impl.h"
 
 #include <ydb/core/engine/mkql_proto.h>
@@ -43,25 +44,6 @@ void DoCreateStream(
     const bool acceptExisted,
     const bool initialScan,
     const bool internal = false);
-
-std::pair<std::optional<NKikimrSchemeOp::ECdcStreamHeartbeatMode>, TString> ChooseHeartbeatMode(
-    const NKikimrSchemeOp::TCreateCdcStream& op,
-    const TFeatureFlags& featureFlags);
-
-struct TCdcPqPartParams {
-    ui32 TotalGroupCount = 0;
-    ui32 PartitionPerTablet = 2;
-    bool ReplicationAutoPartitioning = false;
-    bool KeyRangeAutoPartitioning = false;
-    ui32 MinPartitionCount = 0;
-    ui32 MaxPartitionCount = 0;
-};
-
-// Decides the changefeed topic shape from the source table size.
-// Replication autopartitioning caps max at maxShardsInPath and min at that limit / 4.
-// An explicit TopicPartitions stays the initial count and the strategy minimum, capped by that max.
-TCdcPqPartParams MakeCdcPqPartParams(const NKikimrSchemeOp::TCreateCdcStream& op, ui64 tablePartitionCount,
-    ui64 maxShardsInPath, const TFeatureFlags& featureFlags);
 
 void DoCreatePqPart(
     TVector<ISubOperation::TPtr>& result,
