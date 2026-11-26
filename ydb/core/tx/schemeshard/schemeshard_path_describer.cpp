@@ -571,7 +571,7 @@ void TPathDescriber::DescribeTable(const TActorContext& ctx, TPathId pathId, TPa
             );
             break;
         case NKikimrSchemeOp::EPathTypeCdcStream:
-            Self->DescribeCdcStream(childPathId, childName, *entry->AddCdcStreams());
+            *entry->AddCdcStreams() = Self->CdcStreams.Describe(childPathId, childName);
             break;
         case NKikimrSchemeOp::EPathTypeSequence:
             Self->DescribeSequence(childPathId, childName, *entry->AddSequences(), returnSetVal);
@@ -872,8 +872,8 @@ void TPathDescriber::DescribeTableIndex(const TPath& path) {
 }
 
 void TPathDescriber::DescribeCdcStream(const TPath& path) {
-    Self->DescribeCdcStream(path.Base()->PathId, path.Base()->Name,
-        *Result->Record.MutablePathDescription()->MutableCdcStreamDescription());
+    *Result->Record.MutablePathDescription()->MutableCdcStreamDescription() =
+        Self->CdcStreams.Describe(path.Base()->PathId, path.Base()->Name);
     DescribeChildren(path);
 }
 
@@ -1684,36 +1684,6 @@ void TSchemeShard::DescribeTableIndex(const TPathId& pathId, const TString& name
             break;
         case NKikimrSchemeOp::EIndexTypeInvalid:
             break;
-    }
-}
-
-void TSchemeShard::DescribeCdcStream(const TPathId& pathId, const TString& name,
-        NKikimrSchemeOp::TCdcStreamDescription& desc)
-{
-    Y_VERIFY_S(CdcStreams.contains(pathId), "Cdc stream not found"
-        << ": pathId# " << pathId
-        << ", name# " << name);
-    DescribeCdcStream(pathId, name, CdcStreams.at(pathId), desc);
-}
-
-void TSchemeShard::DescribeCdcStream(const TPathId& pathId, const TString& name, TCdcStreamInfo::TPtr info,
-        NKikimrSchemeOp::TCdcStreamDescription& desc)
-{
-    Y_VERIFY_S(info, "Empty cdc stream info"
-        << ": pathId# " << pathId
-        << ", name# " << name);
-
-    desc.SetName(name);
-    pathId.ToProto(desc.MutablePathId());
-    info->Serialize(desc);
-
-    Y_ABORT_UNLESS(PathsById.contains(pathId));
-    auto path = PathsById.at(pathId);
-
-    for (const auto& [key, value] : path->UserAttrs->Attrs) {
-        auto& attr = *desc.AddUserAttributes();
-        attr.SetKey(key);
-        attr.SetValue(value);
     }
 }
 

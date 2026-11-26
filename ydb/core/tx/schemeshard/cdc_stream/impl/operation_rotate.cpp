@@ -1,8 +1,15 @@
-#include "schemeshard__operation_rotate_cdc_stream.h"
+#include <ydb/core/tx/schemeshard/cdc_stream/operations.h>
 
-#include "schemeshard__operation_common.h"
-#include "schemeshard__operation_part.h"
-#include "schemeshard_cdc_stream_common.h"
+#include <ydb/core/tx/schemeshard/schemeshard__operation_common.h>
+#include <ydb/core/tx/schemeshard/schemeshard__operation_part.h>
+#include <ydb/core/tx/schemeshard/schemeshard_impl.h>
+
+#include <ydb/core/engine/mkql_proto.h>
+#include <ydb/core/scheme/scheme_types_proto.h>
+
+#include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
+#include "stream_changes.h"
+#include "stream_factory.h"
 
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::FLAT_TX_SCHEMESHARD
 
@@ -53,22 +60,20 @@ public:
         Y_ABORT_UNLESS(context.SS->PathsById.contains(newStreamPathId));
         auto newStreamPath = context.SS->PathsById.at(newStreamPathId);
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(oldStreamPathId));
-        auto oldStream = context.SS->CdcStreams.at(oldStreamPathId);
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(newStreamPathId));
-        auto newStream = context.SS->CdcStreams.at(newStreamPathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(oldStreamPathId));
+        auto oldStream = context.SS->CdcStreamInfos.at(oldStreamPathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(newStreamPathId));
+        auto newStream = context.SS->CdcStreamInfos.at(newStreamPathId);
 
         NIceDb::TNiceDb db(context.GetDB());
 
         newStreamPath->StepCreated = step;
         context.SS->PersistCreateStep(db, newStreamPathId, step);
 
-        context.SS->PersistCdcStream(db, newStreamPathId);
-        context.SS->CdcStreams.Set(newStreamPathId, newStream->AlterData);
+        NCdc::FinishCdcStreamCreate(*context.SS, db, newStreamPathId);
         context.SS->TabletCounters->Simple()[COUNTER_CDC_STREAMS_COUNT].Add(1);
 
-        context.SS->PersistCdcStream(db, oldStreamPathId);
-        context.SS->CdcStreams.at(oldStreamPathId)->FinishAlter();
+        NCdcStreamAtTable::FinishCdcStreamAlter(*context.SS, db, oldStreamPathId);
 
         context.SS->ClearDescribePathCaches(oldStreamPath);
         context.SS->ClearDescribePathCaches(newStreamPath);
@@ -219,8 +224,8 @@ public:
         }
 
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(oldStreamPath.Base()->PathId));
-        auto oldStream = context.SS->CdcStreams.at(oldStreamPath.Base()->PathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(oldStreamPath.Base()->PathId));
+        auto oldStream = context.SS->CdcStreamInfos.at(oldStreamPath.Base()->PathId);
 
         TCdcStreamInfo::EState requiredState = TCdcStreamInfo::EState::ECdcStreamStateDisabled;
         TCdcStreamInfo::EState newState = TCdcStreamInfo::EState::ECdcStreamStateInvalid;
@@ -384,15 +389,14 @@ public:
             return result;
         }
 
-        const auto [heartbeatMode, heartbeatModeError] = ChooseHeartbeatMode(newStreamOp, AppData()->FeatureFlags);
-        if (!heartbeatMode) {
-            result->SetError(NKikimrScheme::StatusInvalidParameter, heartbeatModeError);
+        const auto [newStream, newStreamError] = MakeCdcStream(newStreamOp, AppData()->FeatureFlags);
+        if (!newStream) {
+            result->SetError(NKikimrScheme::StatusInvalidParameter, newStreamError);
             return result;
         }
 
         auto guard = context.DbGuard();
         context.MemChanges.GrabPath(context.SS, oldStreamPath.Base()->PathId);
-        context.MemChanges.GrabCdcStream(context.SS, oldStreamPath.Base()->PathId);
         context.MemChanges.GrabNewTxState(context.SS, OperationId);
 
         const auto pathId = context.SS->AllocatePathId();
@@ -400,24 +404,17 @@ public:
         context.MemChanges.GrabPath(context.SS, tablePath.Base()->PathId);
         context.MemChanges.GrabNewTxState(context.SS, OperationId);
         context.MemChanges.GrabDomain(context.SS, newStreamPath.GetPathIdForDomain());
-        context.MemChanges.GrabNewCdcStream(context.SS, pathId);
 
         context.DbChanges.PersistPath(oldStreamPath.Base()->PathId);
-        context.DbChanges.PersistAlterCdcStream(oldStreamPath.Base()->PathId);
         context.DbChanges.PersistTxState(OperationId);
 
         context.DbChanges.PersistPath(pathId);
         context.DbChanges.PersistPath(tablePath.Base()->PathId);
         context.DbChanges.PersistApplyUserAttrs(pathId);
-        context.DbChanges.PersistAlterCdcStream(pathId);
         context.DbChanges.PersistTxState(OperationId);
 
-        auto streamAlter = oldStream->CreateNextVersion();
-        Y_ABORT_UNLESS(streamAlter);
+        auto streamAlter = NCdc::BeginCdcStreamAlter(context, oldStreamPath.Base()->PathId);
         streamAlter->State = newState;
-
-        auto newStream = TCdcStreamInfo::Create(newStreamDesc);
-        Y_ABORT_UNLESS(newStream);
 
         newStreamPath.MaterializeLeaf(owner, pathId);
         result->SetPathId(pathId.LocalPathId);
@@ -437,9 +434,7 @@ public:
         newStreamPath.Base()->PathType = TPathElement::EPathType::EPathTypeCdcStream;
         newStreamPath.Base()->UserAttrs->AlterData = userAttrs;
 
-        context.SS->CdcStreams.Set(pathId, newStream);
-
-        newStream->AlterData->HeartbeatMode = *heartbeatMode;
+        NCdc::AddCdcStream(context, pathId, newStream);
 
         newStreamPath.DomainInfo()->IncPathsInside(context.SS);
         IncAliveChildrenSafeWithUndo(OperationId, tablePath, context); // for correct discard of ChildrenExist prop
@@ -492,12 +487,12 @@ protected:
         oldStreamPathId.ToProto(notice.MutableOldStreamPathId());
 
         Y_ABORT_UNLESS(context.SS->PathsById.contains(newStreamPathId));
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(newStreamPathId));
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(newStreamPathId));
         auto newStreamPath = context.SS->PathsById.at(newStreamPathId);
-        auto newStream = context.SS->CdcStreams.at(newStreamPathId);
+        auto newStream = context.SS->CdcStreamInfos.at(newStreamPathId);
 
         Y_ABORT_UNLESS(newStream->AlterData);
-        context.SS->DescribeCdcStream(newStreamPathId, newStreamPath->Name, newStream->AlterData, *notice.MutableNewStreamDescription());
+        *notice.MutableNewStreamDescription() = NCdc::DescribeCdcStreamAlter(*context.SS, newStreamPathId, newStreamPath->Name);
     }
 
 public:
@@ -680,8 +675,8 @@ public:
 
         Y_ABORT_UNLESS(table->AlterVersion != 0);
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(oldStreamPath.Base()->PathId));
-        auto stream = context.SS->CdcStreams.at(oldStreamPath.Base()->PathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(oldStreamPath.Base()->PathId));
+        auto stream = context.SS->CdcStreamInfos.at(oldStreamPath.Base()->PathId);
 
         Y_ABORT_UNLESS(stream->AlterVersion != 0);
         Y_ABORT_UNLESS(stream->AlterData);

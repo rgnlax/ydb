@@ -1,8 +1,14 @@
-#include "schemeshard__operation_drop_cdc_stream.h"
+#include <ydb/core/tx/schemeshard/cdc_stream/operations.h>
 
-#include "schemeshard__operation_common.h"
-#include "schemeshard__operation_part.h"
-#include "schemeshard_cdc_stream_common.h"
+#include <ydb/core/tx/schemeshard/schemeshard__operation_common.h>
+#include <ydb/core/tx/schemeshard/schemeshard__operation_part.h>
+#include <ydb/core/tx/schemeshard/schemeshard_impl.h>
+
+#include <ydb/core/engine/mkql_proto.h>
+#include <ydb/core/scheme/scheme_types_proto.h>
+
+#include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
+#include "stream_changes.h"
 
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::FLAT_TX_SCHEMESHARD
 
@@ -54,7 +60,7 @@ public:
         NIceDb::TNiceDb db(context.GetDB());
 
         context.SS->PersistDropStep(db, pathId, step, OperationId);
-        context.SS->PersistRemoveCdcStream(db, pathId);
+        NCdcStreamAtTable::RemoveCdcStream(*context.SS, db, pathId);
 
         Y_ABORT_UNLESS(context.SS->PathsById.contains(path->ParentPathId));
         auto parent = context.SS->PathsById.at(path->ParentPathId);
@@ -451,8 +457,8 @@ public:
             context.MemChanges.GrabPath(context.SS, streamPath.Base()->PathId);
             context.DbChanges.PersistPath(streamPath.Base()->PathId);
 
-            Y_ABORT_UNLESS(context.SS->CdcStreams.contains(streamPath.Base()->PathId));
-            auto stream = context.SS->CdcStreams.at(streamPath.Base()->PathId);
+            Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(streamPath.Base()->PathId));
+            auto stream = context.SS->CdcStreamInfos.at(streamPath.Base()->PathId);
 
             Y_ABORT_UNLESS(stream->AlterVersion != 0);
             Y_ABORT_UNLESS(!stream->AlterData);
@@ -732,8 +738,8 @@ bool CreateDropCdcStream(TOperationId opId, const TTxTransaction& tx, TOperation
     // Check lock consistency across all streams
     TTxId lockTxId = InvalidTxId;
     for (const auto& streamPath : streamPaths) {
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(streamPath.Base()->PathId));
-        auto stream = context.SS->CdcStreams.at(streamPath.Base()->PathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(streamPath.Base()->PathId));
+        auto stream = context.SS->CdcStreamInfos.at(streamPath.Base()->PathId);
 
         const auto streamLockTxId = stream->State == TCdcStreamInfo::EState::ECdcStreamStateScan
             ? streamPath.Base()->CreateTxId : InvalidTxId;

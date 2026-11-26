@@ -61,6 +61,7 @@
 #include <ydb/core/tx/replication/controller/public_events.h>
 #include <ydb/core/tx/scheme_board/events_schemeshard.h>
 #include <ydb/core/tx/scheme_cache/scheme_cache.h>
+#include <ydb/core/tx/schemeshard/cdc_stream/streams.h>
 #include <ydb/core/tx/schemeshard/index/build_index.h>
 #include <ydb/core/tx/sequenceshard/public/events.h>
 #include <ydb/core/tx/tx_allocator_client/actor_client.h>
@@ -307,7 +308,8 @@ public:
     ui32 MaxTTLShardsInFlight = 0;
 
     TDbRefMap<TTableIndexInfo::TPtr> Indexes{"Indexes", this, DbRefMaps};
-    TDbRefMap<TCdcStreamInfo::TPtr> CdcStreams{"CdcStreams", this, DbRefMaps};
+    TDbRefMap<TCdcStreamInfo::TPtr> CdcStreamInfos{"CdcStreams", this, DbRefMaps};
+    NCdc::TCdcStreams CdcStreams{*this};
     TDbRefMap<TSequenceInfo::TPtr> Sequences{"Sequences", this, DbRefMaps};
     TDbRefMap<TReplicationInfo::TPtr> Replications{"Replications", this, DbRefMaps};
     TDbRefMap<TBlobDepotInfo::TPtr> BlobDepots{"BlobDepots", this, DbRefMaps};
@@ -892,9 +894,6 @@ public:
     void PersistTableIndexAlterVersion(NIceDb::TNiceDb& db, const TPathId& pathId, const TTableIndexInfo::TPtr indexInfo);
 
     // cdc stream
-    void PersistCdcStream(NIceDb::TNiceDb& db, const TPathId& pathId);
-    void PersistCdcStreamAlterData(NIceDb::TNiceDb& db, const TPathId& pathId);
-    void PersistRemoveCdcStream(NIceDb::TNiceDb& db, const TPathId& tableId);
 
     static void PersistTxMinStep(NIceDb::TNiceDb& db, const TOperationId opId, TStepId minStep);
     void PersistRemoveTx(NIceDb::TNiceDb& db, const TOperationId opId, const TTxState& txState);
@@ -1453,8 +1452,6 @@ public:
     void DescribeTableIndex(const TPathId& pathId, const TString& name, TTableIndexInfo::TPtr indexInfo,
         bool fillConfig, bool fillBoundaries, NKikimrSchemeOp::TIndexDescription& entry
     ) const;
-    void DescribeCdcStream(const TPathId& pathId, const TString& name, NKikimrSchemeOp::TCdcStreamDescription& desc);
-    void DescribeCdcStream(const TPathId& pathId, const TString& name, TCdcStreamInfo::TPtr info, NKikimrSchemeOp::TCdcStreamDescription& desc);
     void DescribeSequence(const TPathId& pathId, const TString& name,
         NKikimrSchemeOp::TSequenceDescription& desc, bool fillSetVal = false);
     void DescribeSequence(const TPathId& pathId, const TString& name, TSequenceInfo::TPtr info,

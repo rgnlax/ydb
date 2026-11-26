@@ -1,11 +1,11 @@
 #include "schemeshard__backup_collection_common.h"
 #include "schemeshard__op_traits.h"
 #include "schemeshard__operation_common.h"
-#include "schemeshard__operation_create_cdc_stream.h"
 #include "schemeshard__operation_part.h"
 #include "schemeshard_impl.h"
 
 #include <ydb/core/backup/common/omit_backup.h>
+#include <ydb/core/tx/schemeshard/cdc_stream/operations.h>
 
 
 namespace NKikimr::NSchemeShard {
@@ -174,8 +174,7 @@ TVector<ISubOperation::TPtr> CreateBackupBackupCollection(TOperationId opId, con
                 if (childName.EndsWith("_continuousBackupImpl")) {
                     TPath child = sPath.Child(childName);
                     if (!child.IsDeleted() && child.IsCdcStream()) {
-                        if (context.SS->CdcStreams.contains(childId)) {
-                            const auto& streamInfo = context.SS->CdcStreams.at(childId);
+                        if (const auto streamInfo = context.SS->CdcStreams.Find(childId)) {
                             if (streamInfo->Format == NKikimrSchemeOp::ECdcStreamFormatProto) {
                                 oldStreamName = childName;
                             }
@@ -218,8 +217,7 @@ TVector<ISubOperation::TPtr> CreateBackupBackupCollection(TOperationId opId, con
                             if (childNameInIndex.EndsWith("_continuousBackupImpl")) {
                                 TPath child = indexTablePath.Child(childNameInIndex);
                                 if (!child.IsDeleted() && child.IsCdcStream()) {
-                                    if (context.SS->CdcStreams.contains(childIdInIndex)) {
-                                        const auto& streamInfo = context.SS->CdcStreams.at(childIdInIndex);
+                                    if (const auto streamInfo = context.SS->CdcStreams.Find(childIdInIndex)) {
                                         if (streamInfo->Format == NKikimrSchemeOp::ECdcStreamFormatProto) {
                                             oldIndexStreamName = childNameInIndex;
                                         }

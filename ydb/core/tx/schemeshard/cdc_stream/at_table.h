@@ -12,6 +12,7 @@ struct TPathId;
 namespace NSchemeShard {
 
 struct TOperationContext;
+class TSchemeShard;
 struct TTxState;
 
 } // namespace NSchemeShard
@@ -29,6 +30,9 @@ namespace NKikimr::NSchemeShard::NCdcStreamAtTable {
 void FillNotice(const TPathId& pathId, TOperationContext& context, NKikimrTxDataShard::TCreateCdcStreamNotice& notice);
 
 bool IsIndexTypeSupportedForCdc(NKikimrSchemeOp::EIndexType type);
+
+void FinishCdcStreamAlter(TSchemeShard& ss, NIceDb::TNiceDb& db, const TPathId& streamPathId);
+void RemoveCdcStream(TSchemeShard& ss, NIceDb::TNiceDb& db, const TPathId& streamPathId);
 
 // Only for the Ready -> Ready index metadata update accompanying a CDC operation.
 void MaybeGuardIndexWithBaseCdcScanLock(

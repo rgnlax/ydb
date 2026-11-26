@@ -94,11 +94,11 @@ void TMemoryChanges::GrabSequence(TSchemeShard* ss, const TPathId& pathId) {
 }
 
 void TMemoryChanges::GrabNewCdcStream(TSchemeShard* ss, const TPathId& pathId) {
-    GrabNew(pathId, ss->CdcStreams, CdcStreams);
+    GrabNew(pathId, ss->CdcStreamInfos, CdcStreams);
 }
 
 void TMemoryChanges::GrabCdcStream(TSchemeShard* ss, const TPathId& pathId) {
-    Grab<TCdcStreamInfo>(pathId, ss->CdcStreams, CdcStreams);
+    Grab<TCdcStreamInfo>(pathId, ss->CdcStreamInfos, CdcStreams);
 }
 
 void TMemoryChanges::GrabNewTableSnapshot(TSchemeShard*, const TPathId& pathId, TTxId snapshotTxId) {
@@ -262,7 +262,7 @@ void TMemoryChanges::UnDo(TSchemeShard* ss) {
 
     while (CdcStreams) {
         const auto& [id, elem] = CdcStreams.top();
-        ss->CdcStreams.RestoreMembershipWithoutRefcount(id, elem);
+        ss->CdcStreamInfos.RestoreMembershipWithoutRefcount(id, elem);
         CdcStreams.pop();
     }
 

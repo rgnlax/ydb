@@ -5,7 +5,7 @@
 #include <ydb/core/persqueue/events/global.h>
 #include <ydb/core/protos/pqdata_transaction.pb.h>
 #include <ydb/core/persqueue/writer/source_id_encoding.h>
-#include <ydb/core/scheme/scheme_tablecell.h>
+#include <ydb/core/tx/schemeshard/cdc_stream/topic.h>
 #include <library/cpp/iterator/iterate_keys.h>
 
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::FLAT_TX_SCHEMESHARD
@@ -171,23 +171,6 @@ void AppendPQTabletConfigDelta(
         auto& partition = *config.AddAllPartitions();
         FillPartition(partition, partitionInfo, ui64(tabletId));
     }
-}
-
-bool IsKeyRangeHeartbeatsStream(const TPathId& streamPathId, const TOperationContext& context) {
-    const auto it = context.SS->CdcStreams.find(streamPathId);
-    if (it == context.SS->CdcStreams.end()) {
-        return false;
-    }
-
-    const auto& stream = it->second->AlterData ? it->second->AlterData : it->second;
-    return stream->HeartbeatMode == NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange;
-}
-
-TString MakeFullKeyBound(const TString& bound, size_t keySize) {
-    const TSerializedCellVec key(bound);
-    TVector<TCell> cells(key.GetCells().begin(), key.GetCells().end());
-    cells.resize(keySize);
-    return TSerializedCellVec::Serialize(cells);
 }
 
 }  // anonymous namespace
@@ -452,36 +435,9 @@ bool TConfigureParts::ProgressState(TOperationContext& context) {
     auto topicPath = TPath::Init(txState->TargetPathId, context.SS);
 
     NKikimrPQ::TBootstrapConfig bootstrapConfig;
-    if (txState->TxType == TTxState::TxCreatePQGroup && topicPath.Parent().IsCdcStream()) {
-        auto tablePath = topicPath.Parent().Parent(); // table/cdc_stream/topic
-        Y_ABORT_UNLESS(tablePath.IsResolved());
-
-        Y_ABORT_UNLESS(context.SS->Tables.contains(tablePath.Base()->PathId));
-        auto table = context.SS->Tables.at(tablePath.Base()->PathId);
-
-        const bool keyRangeHeartbeats = IsKeyRangeHeartbeatsStream(topicPath.Parent().Base()->PathId, context);
-        const auto& partitions = table->GetPartitions();
-        for (size_t i = 0; i < partitions.size(); ++i) {
-            const auto* shardInfo = context.SS->ShardInfos.FindPtr(partitions[i]->ShardIdx);
-            Y_ABORT_UNLESS(shardInfo != nullptr);
-
-            auto& mg = *bootstrapConfig.AddExplicitMessageGroups();
-            mg.SetId(NPQ::NSourceIdEncoding::EncodeSimple(ToString(shardInfo->TabletID)));
-
-            // Pass the DataShard key range to a key range CDC topic: PQ registers the source only in its partitions
-            if (keyRangeHeartbeats) {
-                if (i > 0) {
-                    mg.MutableKeyRange()->SetFromBound(MakeFullKeyBound(partitions[i - 1]->EndOfRange, table->KeyColumnIds.size()));
-                }
-                if (i + 1 < partitions.size()) {
-                    mg.MutableKeyRange()->SetToBound(MakeFullKeyBound(partitions[i]->EndOfRange, table->KeyColumnIds.size()));
-                }
-            }
-
-            //NOTE: Other CDC topics get no KeyRange on the group: nothing consumes the key ranges on the pqtablet side.
-            // Routing is datashard-side over the topic partitioning, split continuity is
-            // the change-exchange re-registration, and the table split/merge re-registration
-            // produces rangeless ids anyway.
+    if (txState->TxType == TTxState::TxCreatePQGroup) {
+        if (auto cdcBootstrapConfig = NCdc::MakeCdcStreamTopicBootstrapConfig(context, topicPath)) {
+            bootstrapConfig = std::move(*cdcBootstrapConfig);
         }
     }
 

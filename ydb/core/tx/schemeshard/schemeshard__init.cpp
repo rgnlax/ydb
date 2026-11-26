@@ -3496,116 +3496,13 @@ struct TSchemeShard::TTxInit : public TTransactionBase<TSchemeShard> {
             }
         }
 
-        // Read CdcStream
+        // Read CdcStream and CdcStreamAlterData
         {
-            auto rowset = db.Table<Schema::CdcStream>().Range().Select();
-            if (!rowset.IsReady()) {
+            auto [ready, scansToResume] = Self->CdcStreams.Load(db);
+            if (!ready) {
                 return false;
             }
-
-            while (!rowset.EndOfSet()) {
-                auto pathId = TPathId(
-                    TOwnerId(rowset.GetValue<Schema::CdcStream::OwnerPathId>()),
-                    TLocalPathId(rowset.GetValue<Schema::CdcStream::LocalPathId>())
-                );
-                auto alterVersion = rowset.GetValue<Schema::CdcStream::AlterVersion>();
-                auto settings = TCdcStreamSettings()
-                    .WithMode(rowset.GetValue<Schema::CdcStream::Mode>())
-                    .WithFormat(rowset.GetValue<Schema::CdcStream::Format>())
-                    .WithVirtualTimestamps(rowset.GetValueOrDefault<Schema::CdcStream::VirtualTimestamps>(false))
-                    .WithResolvedTimestamps(TDuration::MilliSeconds(rowset.GetValueOrDefault<Schema::CdcStream::ResolvedTimestampsIntervalMs>(0)))
-                    .WithSchemaChanges(rowset.GetValueOrDefault<Schema::CdcStream::SchemaChanges>(false))
-                    .WithAwsRegion(rowset.GetValue<Schema::CdcStream::AwsRegion>())
-                    .WithState(rowset.GetValue<Schema::CdcStream::State>())
-                    .WithUserSIDs(rowset.GetValueOrDefault<Schema::CdcStream::UserSIDs>(false))
-                    .WithTraceIds(rowset.GetValueOrDefault<Schema::CdcStream::TraceIds>(false))
-                    .WithCompression(rowset.GetValueOrDefault<Schema::CdcStream::Compression>(NKikimrSchemeOp::ECdcStreamCompressionNone))
-                    .WithCompressionLevel(rowset.GetValueOrDefault<Schema::CdcStream::CompressionLevel>(0))
-                    .WithHeartbeatMode(rowset.GetValueOrDefault<Schema::CdcStream::HeartbeatMode>(NKikimrSchemeOp::ECdcStreamHeartbeatModeDirect));
-
-                Y_VERIFY_S(Self->PathsById.contains(pathId), "Path doesn't exist, pathId: " << pathId);
-                auto path = Self->PathsById.at(pathId);
-
-                Y_VERIFY_S(path->IsCdcStream(), "Path is not a cdc stream"
-                    << ", pathId: " << pathId
-                    << ", path type: " << NKikimrSchemeOp::EPathType_Name(path->PathType));
-
-                Y_ABORT_UNLESS(!Self->CdcStreams.contains(pathId));
-                const auto& stream = Self->CdcStreams.Set(pathId, new TCdcStreamInfo(alterVersion, std::move(settings)));
-
-                if (stream->State == NKikimrSchemeOp::ECdcStreamStateScan) {
-                    Y_VERIFY_S(Self->PathsById.contains(path->ParentPathId), "Parent path is not found"
-                        << ", cdc stream pathId: " << pathId
-                        << ", parent pathId: " << path->ParentPathId);
-                    CdcStreamScansToResume[path->ParentPathId].push_back(pathId);
-                }
-
-                if (!rowset.Next()) {
-                    return false;
-                }
-            }
-        }
-
-        // Read CdcStreamAlterData
-        {
-            auto rowset = db.Table<Schema::CdcStreamAlterData>().Range().Select();
-            if (!rowset.IsReady()) {
-                return false;
-            }
-
-            while (!rowset.EndOfSet()) {
-                auto pathId = TPathId(
-                    TOwnerId(rowset.GetValue<Schema::CdcStreamAlterData::OwnerPathId>()),
-                    TLocalPathId(rowset.GetValue<Schema::CdcStreamAlterData::LocalPathId>())
-                );
-                auto alterVersion = rowset.GetValue<Schema::CdcStreamAlterData::AlterVersion>();
-                auto settings = TCdcStreamSettings()
-                    .WithMode(rowset.GetValue<Schema::CdcStreamAlterData::Mode>())
-                    .WithFormat(rowset.GetValue<Schema::CdcStreamAlterData::Format>())
-                    .WithVirtualTimestamps(rowset.GetValueOrDefault<Schema::CdcStreamAlterData::VirtualTimestamps>(false))
-                    .WithResolvedTimestamps(TDuration::MilliSeconds(rowset.GetValueOrDefault<Schema::CdcStreamAlterData::ResolvedTimestampsIntervalMs>(0)))
-                    .WithSchemaChanges(rowset.GetValueOrDefault<Schema::CdcStreamAlterData::SchemaChanges>(false))
-                    .WithAwsRegion(rowset.GetValue<Schema::CdcStreamAlterData::AwsRegion>())
-                    .WithState(rowset.GetValue<Schema::CdcStreamAlterData::State>())
-                    .WithUserSIDs(rowset.GetValueOrDefault<Schema::CdcStreamAlterData::UserSIDs>(false))
-                    .WithTraceIds(rowset.GetValueOrDefault<Schema::CdcStreamAlterData::TraceIds>(false))
-                    .WithCompression(rowset.GetValueOrDefault<Schema::CdcStreamAlterData::Compression>(NKikimrSchemeOp::ECdcStreamCompressionNone))
-                    .WithCompressionLevel(rowset.GetValueOrDefault<Schema::CdcStreamAlterData::CompressionLevel>(0))
-                    .WithHeartbeatMode(rowset.GetValueOrDefault<Schema::CdcStreamAlterData::HeartbeatMode>(NKikimrSchemeOp::ECdcStreamHeartbeatModeDirect));
-
-                Y_VERIFY_S(Self->PathsById.contains(pathId), "Path doesn't exist, pathId: " << pathId);
-                auto path = Self->PathsById.at(pathId);
-
-                Y_VERIFY_S(path->IsCdcStream(), "Path is not a cdc stream"
-                    << ", pathId: " << pathId
-                    << ", path type: " << NKikimrSchemeOp::EPathType_Name(path->PathType));
-
-                if (!Self->CdcStreams.contains(pathId)) {
-                    Y_ABORT_UNLESS(alterVersion == 1);
-                    Self->CdcStreams.Set(pathId, TCdcStreamInfo::New(settings));
-                }
-
-                auto stream = Self->CdcStreams.at(pathId);
-                Y_ABORT_UNLESS(stream->AlterData == nullptr);
-                Y_ABORT_UNLESS(stream->AlterVersion < alterVersion);
-                stream->AlterData = new TCdcStreamInfo(alterVersion, std::move(settings));
-
-                Y_VERIFY_S(Self->PathsById.contains(path->ParentPathId), "Parent path is not found"
-                    << ", cdc stream pathId: " << pathId
-                    << ", parent pathId: " << path->ParentPathId);
-                auto parent = Self->PathsById.at(path->ParentPathId);
-
-                Y_VERIFY_S(parent->IsTable(), "Parent path is not a table"
-                    << ", cdc stream pathId: " << pathId
-                    << ", parent pathId: " << path->ParentPathId);
-                Y_VERIFY_S(Self->Tables.contains(path->ParentPathId), "Parent path is not found in Tables map"
-                    << ", cdc stream pathId: " << pathId
-                    << ", parent pathId: " << path->ParentPathId);
-
-                if (!rowset.Next()) {
-                    return false;
-                }
-            }
+            CdcStreamScansToResume = std::move(scansToResume);
         }
 
         // Read CdcStreamScanShardStatus
@@ -3626,10 +3523,10 @@ struct TSchemeShard::TTxInit : public TTransactionBase<TSchemeShard> {
                 );
                 auto status = rowset.GetValue<Schema::CdcStreamScanShardStatus::Status>();
 
-                Y_VERIFY_S(Self->CdcStreams.contains(pathId), "Cdc stream not found"
+                Y_VERIFY_S(Self->CdcStreamInfos.contains(pathId), "Cdc stream not found"
                     << ": pathId# " << pathId);
 
-                auto stream = Self->CdcStreams.at(pathId);
+                auto stream = Self->CdcStreamInfos.at(pathId);
                 stream->ScanShards.emplace(shardIdx, status);
 
                 if (status != NKikimrTxDataShard::TEvCdcStreamScanResponse::DONE) {

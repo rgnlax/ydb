@@ -1,12 +1,17 @@
-#include "schemeshard__operation_create_cdc_stream.h"
+#include <ydb/core/tx/schemeshard/cdc_stream/operations.h>
 
-#include "schemeshard__operation_common.h"
-#include "schemeshard__operation_part.h"
-#include "schemeshard_cdc_stream_common.h"
-#include "schemeshard_impl.h"
+#include <ydb/core/tx/schemeshard/schemeshard__operation_common.h>
+#include <ydb/core/tx/schemeshard/schemeshard__operation_part.h>
+#include <ydb/core/tx/schemeshard/schemeshard_impl.h>
 
 #include <ydb/core/engine/mkql_proto.h>
 #include <ydb/core/scheme/scheme_types_proto.h>
+
+#include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
+#include "stream_changes.h"
+#include "stream_factory.h"
+#include "topic_pipeline.h"
+
 
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::FLAT_TX_SCHEMESHARD
 
@@ -15,32 +20,6 @@ namespace NKikimr::NSchemeShard {
 namespace NCdc {
 
 namespace {
-
-bool IsReplicationSupport(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc, const TString& capability) {
-    for (auto& attribute : streamDesc.GetUserAttributes()) {
-        if (attribute.GetKey() == ATTR_ASYNC_REPLICATION) {
-            if (!attribute.HasValue()) {
-                break;
-            }
-
-            NJson::TJsonValue result;
-            if (!NJson::ReadJsonFastTree(attribute.GetValue(), &result)) {
-                break;
-            }
-
-            auto map = result.GetMap();
-            return map[capability].GetBoolean();
-        }
-    }
-
-    return false;
-}
-
-bool ShouldUseKeyRangeHeartbeats(const NKikimrSchemeOp::TCdcStreamDescription& streamDesc, const TFeatureFlags& featureFlags) {
-    return featureFlags.GetEnableCdcKeyRangeHeartbeats()
-        && streamDesc.GetResolvedTimestampsIntervalMs() > 0
-        && IsReplicationSupport(streamDesc, "supports_key_range_autopartitioning");
-}
 
 class TPropose: public TSubOperationState {
 public:
@@ -78,16 +57,15 @@ public:
         Y_ABORT_UNLESS(context.SS->PathsById.contains(pathId));
         auto path = context.SS->PathsById.at(pathId);
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(pathId));
-        auto stream = context.SS->CdcStreams.at(pathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(pathId));
+        auto stream = context.SS->CdcStreamInfos.at(pathId);
 
         NIceDb::TNiceDb db(context.GetDB());
 
         path->StepCreated = step;
         context.SS->PersistCreateStep(db, pathId, step);
 
-        context.SS->PersistCdcStream(db, pathId);
-        context.SS->CdcStreams.Set(pathId, stream->AlterData);
+        NCdc::FinishCdcStreamCreate(*context.SS, db, pathId);
 
         context.SS->TabletCounters->Simple()[COUNTER_CDC_STREAMS_COUNT].Add(1);
         context.SS->ClearDescribePathCaches(path);
@@ -363,14 +341,11 @@ public:
             return result;
         }
 
-        const auto [heartbeatMode, heartbeatModeError] = ChooseHeartbeatMode(op, AppData()->FeatureFlags);
-        if (!heartbeatMode) {
-            result->SetError(NKikimrScheme::StatusInvalidParameter, heartbeatModeError);
+        const auto [stream, streamError] = MakeCdcStream(op, AppData()->FeatureFlags);
+        if (!stream) {
+            result->SetError(NKikimrScheme::StatusInvalidParameter, streamError);
             return result;
         }
-
-        auto stream = TCdcStreamInfo::Create(streamDesc);
-        Y_ABORT_UNLESS(stream);
 
         auto guard = context.DbGuard();
         const auto pathId = context.SS->AllocatePathId();
@@ -378,12 +353,10 @@ public:
         context.MemChanges.GrabPath(context.SS, tablePath.Base()->PathId);
         context.MemChanges.GrabNewTxState(context.SS, OperationId);
         context.MemChanges.GrabDomain(context.SS, streamPath.GetPathIdForDomain());
-        context.MemChanges.GrabNewCdcStream(context.SS, pathId);
 
         context.DbChanges.PersistPath(pathId);
         context.DbChanges.PersistPath(tablePath.Base()->PathId);
         context.DbChanges.PersistApplyUserAttrs(pathId);
-        context.DbChanges.PersistAlterCdcStream(pathId);
         context.DbChanges.PersistTxState(OperationId);
 
         streamPath.MaterializeLeaf(owner, pathId);
@@ -404,9 +377,7 @@ public:
         streamPath.Base()->PathType = TPathElement::EPathType::EPathTypeCdcStream;
         streamPath.Base()->UserAttrs->AlterData = userAttrs;
 
-        context.SS->CdcStreams.Set(pathId, stream);
-
-        stream->AlterData->HeartbeatMode = *heartbeatMode;
+        NCdc::AddCdcStream(context, pathId, stream);
 
         streamPath.DomainInfo()->IncPathsInside(context.SS);
         IncAliveChildrenSafeWithUndo(OperationId, tablePath, context); // for correct discard of ChildrenExist prop
@@ -516,8 +487,8 @@ public:
             }
 
             Y_ABORT_UNLESS(childPath->IsCdcStream() && !childPath->Dropped());
-            Y_ABORT_UNLESS(context.SS->CdcStreams.contains(childPathId));
-            auto stream = context.SS->CdcStreams.at(childPathId);
+            Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(childPathId));
+            auto stream = context.SS->CdcStreamInfos.at(childPathId);
 
             Y_ABORT_UNLESS(stream->State == TCdcStreamInfo::EState::ECdcStreamStateScan);
             Y_VERIFY_S(!streamPathId, "Too many cdc streams are planned to fill with initial scan"
@@ -726,71 +697,6 @@ void DoCreateLock(
 
 } // anonymous
 
-std::pair<std::optional<NKikimrSchemeOp::ECdcStreamHeartbeatMode>, TString> ChooseHeartbeatMode(
-    const NKikimrSchemeOp::TCreateCdcStream& op,
-    const TFeatureFlags& featureFlags)
-{
-    if (!ShouldUseKeyRangeHeartbeats(op.GetStreamDescription(), featureFlags)) {
-        return {NKikimrSchemeOp::ECdcStreamHeartbeatModeDirect, TString()};
-    }
-
-    if (op.HasTopicPartitions() || op.GetTopicAutoPartitioning()) {
-        return {std::nullopt,
-            "TopicPartitions and TopicAutoPartitioning are not supported for CDC streams with key range heartbeats"};
-    }
-
-    return {NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange, TString()};
-}
-
-TCdcPqPartParams MakeCdcPqPartParams(const NKikimrSchemeOp::TCreateCdcStream& op, ui64 tablePartitionCount,
-        ui64 maxShardsInPath, const TFeatureFlags& featureFlags) {
-    // Autopartitioned replication topics are hash-partitioned. Cap that split
-    // range by the path shard limit so a large table still gets a creatable topic.
-    const ui64 maxPartitionCountLimit = std::min<ui64>(maxShardsInPath, Max<ui32>());
-    const ui64 minPartitionCountLimit = maxPartitionCountLimit / 4;
-
-    // Start a key range CDC topic with one partition per table shard and let it split up to the path shard limit
-    if (ShouldUseKeyRangeHeartbeats(op.GetStreamDescription(), featureFlags)) {
-        const auto totalGroupCount = static_cast<ui32>(tablePartitionCount);
-        return TCdcPqPartParams{
-            .TotalGroupCount = totalGroupCount,
-            .KeyRangeAutoPartitioning = true,
-            .MinPartitionCount = totalGroupCount,
-            .MaxPartitionCount = static_cast<ui32>(std::max<ui64>(totalGroupCount, maxPartitionCountLimit)),
-        };
-    }
-
-    TCdcPqPartParams params;
-    params.TotalGroupCount = static_cast<ui32>(op.HasTopicPartitions() ? op.GetTopicPartitions() : tablePartitionCount);
-    params.PartitionPerTablet = 2;
-
-    if (!IsReplicationSupport(op.GetStreamDescription(), "supports_topic_autopartitioning")) {
-        return params;
-    }
-
-    ui64 minParts = std::min<ui64>(std::max<ui64>(tablePartitionCount / 16, 1), minPartitionCountLimit);
-    ui64 maxParts = std::min<ui64>(std::max<ui64>(tablePartitionCount * 16, 50), maxPartitionCountLimit);
-
-    ui64 total = params.TotalGroupCount;
-    if (op.HasTopicPartitions()) {
-        // TopicPartitions is min_active_partitions: the initial count and the
-        // strategy minimum. Only the path shard ceiling applies, so a smaller
-        // request is not raised to the formula minimum.
-        if (total > maxParts) {
-            total = maxParts;
-        }
-        minParts = total;
-    } else if (total > maxParts) {
-        total = maxParts;
-    }
-
-    params.ReplicationAutoPartitioning = true;
-    params.TotalGroupCount = static_cast<ui32>(total);
-    params.MinPartitionCount = static_cast<ui32>(minParts);
-    params.MaxPartitionCount = static_cast<ui32>(maxParts);
-    return params;
-}
-
 void DoCreatePqPart(
         TVector<ISubOperation::TPtr>& result,
         const NKikimrSchemeOp::TCreateCdcStream& op,
@@ -805,80 +711,14 @@ void DoCreatePqPart(
     outTx.SetFailOnExist(!acceptExisted);
 
     const ui64 maxShardsInPath = streamPath.DomainInfo()->GetSchemeLimits().MaxShardsInPath;
-    const auto pqParams = MakeCdcPqPartParams(op, table->GetPartitions().size(), maxShardsInPath, AppData()->FeatureFlags);
-
-    auto& desc = *outTx.MutableCreatePersQueueGroup();
-    desc.SetName("streamImpl");
-    desc.SetPartitionPerTablet(pqParams.PartitionPerTablet);
-
-    auto& pqConfig = *desc.MutablePQTabletConfig();
-    pqConfig.SetTopicName(streamName);
-    pqConfig.SetTopicPath(streamPath.Child("streamImpl").PathString());
-    pqConfig.SetMeteringMode(NKikimrPQ::TPQTabletConfig::METERING_MODE_REQUEST_UNITS);
-
-    auto& partitionConfig = *pqConfig.MutablePartitionConfig();
-    partitionConfig.SetLifetimeSeconds(op.GetRetentionPeriodSeconds());
-    partitionConfig.SetWriteSpeedInBytesPerSecond(1_MB); // TODO: configurable write speed
-    partitionConfig.SetBurstSize(1_MB); // TODO: configurable burst
-    partitionConfig.SetMaxCountInPartition(Max<i32>());
-
-    if (pqParams.ReplicationAutoPartitioning || pqParams.KeyRangeAutoPartitioning) {
-        auto * ps = pqConfig.MutablePartitionStrategy();
-        ps->SetPartitionStrategyType(::NKikimrPQ::TPQTabletConfig_TPartitionStrategyType::TPQTabletConfig_TPartitionStrategyType_CAN_SPLIT);
-        ps->SetMinPartitionCount(pqParams.MinPartitionCount);
-        ps->SetMaxPartitionCount(pqParams.MaxPartitionCount);
-        ps->SetScaleThresholdSeconds(30);
-    } else if (op.GetTopicAutoPartitioning()) {
-        auto * ps = pqConfig.MutablePartitionStrategy();
-        ps->SetPartitionStrategyType(::NKikimrPQ::TPQTabletConfig_TPartitionStrategyType::TPQTabletConfig_TPartitionStrategyType_CAN_SPLIT);
-        const ui32 minPartitionCount = op.HasTopicPartitions() ? op.GetTopicPartitions() : 1;
-        ps->SetMinPartitionCount(minPartitionCount);
-        // An explicit max is kept as-is: min > max is rejected in CreatePersQueueGroup.
-        // An absent max keeps the historical ceiling of 50, but never below the min.
-        if (op.HasMaxPartitionCount()) {
-            ps->SetMaxPartitionCount(op.GetMaxPartitionCount());
-        } else {
-            ps->SetMaxPartitionCount(std::max<ui32>(minPartitionCount, 50));
-        }
-        ps->SetScaleThresholdSeconds(30);
-    }
-
-    if (pqParams.KeyRangeAutoPartitioning) {
-        pqConfig.SetSplitByPartitionKey(true);
-    }
-
-    if (!pqParams.ReplicationAutoPartitioning && !op.GetTopicAutoPartitioning()) {
-        for (const auto& tag : table->KeyColumnIds) {
-            Y_ABORT_UNLESS(table->Columns.contains(tag));
-            const auto& column = table->Columns.at(tag);
-
-            auto& keyComponent = *pqConfig.AddPartitionKeySchema();
-            keyComponent.SetName(column.Name);
-            auto columnType = NScheme::ProtoColumnTypeFromTypeInfoMod(column.PType, column.PTypeMod);
-            keyComponent.SetTypeId(columnType.TypeId);
-            if (columnType.TypeInfo) {
-                *keyComponent.MutableTypeInfo() = *columnType.TypeInfo;
-            }
-        }
-
-        for (const auto& serialized : boundaries) {
-            TSerializedCellVec endKey(serialized);
-            Y_ABORT_UNLESS(endKey.GetCells().size() <= table->KeyColumnIds.size());
-
-            TString errStr;
-            auto& boundary = *desc.AddPartitionBoundaries();
-            for (ui32 ki = 0; ki < endKey.GetCells().size(); ++ki) {
-                const auto& cell = endKey.GetCells()[ki];
-                const auto tag = table->KeyColumnIds.at(ki);
-                Y_ABORT_UNLESS(table->Columns.contains(tag));
-                const auto typeId = table->Columns.at(tag).PType;
-                const bool ok = NMiniKQL::CellToValue(typeId, cell, *boundary.AddTuple(), errStr);
-                Y_ABORT_UNLESS(ok, "Failed to build key tuple at position %" PRIu32 " error: %s", ki, errStr.data());
-            }
-        }
-    }
-
-    desc.SetTotalGroupCount(pqParams.TotalGroupCount);
+    *outTx.MutableCreatePersQueueGroup() = MakeCdcStreamTopic(
+        MakeCdcStreamFeatures(),
+        TCdcStreamRequest{op, AppData()->FeatureFlags},
+        streamName,
+        streamPath.Child("streamImpl").PathString(),
+        *table,
+        boundaries,
+        maxShardsInPath);
 
     result.push_back(CreateNewPQ(NextPartId(opId, result), outTx));
 }

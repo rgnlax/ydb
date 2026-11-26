@@ -1,4 +1,6 @@
-#include "schemeshard_cdc_stream_common.h"
+#include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
+
+#include "stream_changes.h"
 
 #include <ydb/core/protos/tx_datashard.pb.h>
 #include <ydb/core/scheme/scheme_pathid.h>
@@ -74,7 +76,7 @@ void MaybeGuardIndexWithBaseCdcScanLock(
             continue;
         }
 
-        const auto stream = context.SS->CdcStreams.at(childId);
+        const auto stream = context.SS->CdcStreamInfos.at(childId);
         if (stream->State == TCdcStreamInfo::EState::ECdcStreamStateScan) {
             // The index CDC operation owns only its implementation table's lock
             // and snapshot. Borrow the verified base scan guard for the index
@@ -104,8 +106,8 @@ void FillNotice(const TPathId& pathId, TOperationContext& context, NKikimrTxData
             continue;
         }
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(childPathId));
-        auto stream = context.SS->CdcStreams.at(childPathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(childPathId));
+        auto stream = context.SS->CdcStreamInfos.at(childPathId);
 
         if (stream->State != TCdcStreamInfo::EState::ECdcStreamStateInvalid) {
             continue;
@@ -117,7 +119,7 @@ void FillNotice(const TPathId& pathId, TOperationContext& context, NKikimrTxData
         found = true;
 
         Y_ABORT_UNLESS(stream->AlterData);
-        context.SS->DescribeCdcStream(childPathId, childName, stream->AlterData, *notice.MutableStreamDescription());
+        *notice.MutableStreamDescription() = NCdc::DescribeCdcStreamAlter(*context.SS, childPathId, childName);
 
         if (stream->AlterData->State == TCdcStreamInfo::EState::ECdcStreamStateScan) {
             notice.SetSnapshotName("ChangefeedInitialScan");

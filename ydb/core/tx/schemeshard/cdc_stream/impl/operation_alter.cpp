@@ -1,8 +1,14 @@
-#include "schemeshard__operation_alter_cdc_stream.h"
+#include <ydb/core/tx/schemeshard/cdc_stream/operations.h>
 
-#include "schemeshard__operation_common.h"
-#include "schemeshard__operation_part.h"
-#include "schemeshard_cdc_stream_common.h"
+#include <ydb/core/tx/schemeshard/schemeshard__operation_common.h>
+#include <ydb/core/tx/schemeshard/schemeshard__operation_part.h>
+#include <ydb/core/tx/schemeshard/schemeshard_impl.h>
+
+#include <ydb/core/engine/mkql_proto.h>
+#include <ydb/core/scheme/scheme_types_proto.h>
+
+#include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
+#include "stream_changes.h"
 
 #include <ydb/library/actors/core/log.h>
 
@@ -52,13 +58,12 @@ public:
         Y_ABORT_UNLESS(context.SS->PathsById.contains(pathId));
         auto path = context.SS->PathsById.at(pathId);
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(pathId));
-        auto stream = context.SS->CdcStreams.at(pathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(pathId));
+        auto stream = context.SS->CdcStreamInfos.at(pathId);
 
         NIceDb::TNiceDb db(context.GetDB());
 
-        context.SS->PersistCdcStream(db, pathId);
-        context.SS->CdcStreams.at(pathId)->FinishAlter();
+        NCdcStreamAtTable::FinishCdcStreamAlter(*context.SS, db, pathId);
 
         context.SS->ClearDescribePathCaches(path);
         context.OnComplete.PublishToSchemeBoard(OperationId, pathId);
@@ -160,8 +165,8 @@ public:
             }
         }
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(streamPath.Base()->PathId));
-        auto stream = context.SS->CdcStreams.at(streamPath.Base()->PathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(streamPath.Base()->PathId));
+        auto stream = context.SS->CdcStreamInfos.at(streamPath.Base()->PathId);
 
         TCdcStreamInfo::EState requiredState = TCdcStreamInfo::EState::ECdcStreamStateInvalid;
         TCdcStreamInfo::EState newState = TCdcStreamInfo::EState::ECdcStreamStateInvalid;
@@ -195,15 +200,12 @@ public:
 
         auto guard = context.DbGuard();
         context.MemChanges.GrabPath(context.SS, streamPath.Base()->PathId);
-        context.MemChanges.GrabCdcStream(context.SS, streamPath.Base()->PathId);
         context.MemChanges.GrabNewTxState(context.SS, OperationId);
 
         context.DbChanges.PersistPath(streamPath.Base()->PathId);
-        context.DbChanges.PersistAlterCdcStream(streamPath.Base()->PathId);
         context.DbChanges.PersistTxState(OperationId);
 
-        auto streamAlter = stream->CreateNextVersion();
-        Y_ABORT_UNLESS(streamAlter);
+        auto streamAlter = NCdc::BeginCdcStreamAlter(context, streamPath.Base()->PathId);
         streamAlter->State = newState;
 
         Y_ABORT_UNLESS(!context.SS->FindTx(OperationId));
@@ -262,8 +264,8 @@ protected:
                 continue;
             }
 
-            Y_ABORT_UNLESS(context.SS->CdcStreams.contains(childPathId));
-            auto stream = context.SS->CdcStreams.at(childPathId);
+            Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(childPathId));
+            auto stream = context.SS->CdcStreamInfos.at(childPathId);
 
             Y_VERIFY_S(!found, "Too many cdc streams are planned to alter"
                 << ": found# " << TPathId::FromProto(notice.GetStreamDescription().GetPathId())
@@ -271,7 +273,7 @@ protected:
             found = true;
 
             Y_ABORT_UNLESS(stream->AlterData);
-            context.SS->DescribeCdcStream(childPathId, childName, stream->AlterData, *notice.MutableStreamDescription());
+            *notice.MutableStreamDescription() = NCdc::DescribeCdcStreamAlter(*context.SS, childPathId, childName);
         }
     }
 
@@ -450,8 +452,8 @@ public:
 
         Y_ABORT_UNLESS(table->AlterVersion != 0);
 
-        Y_ABORT_UNLESS(context.SS->CdcStreams.contains(streamPath.Base()->PathId));
-        auto stream = context.SS->CdcStreams.at(streamPath.Base()->PathId);
+        Y_ABORT_UNLESS(context.SS->CdcStreamInfos.contains(streamPath.Base()->PathId));
+        auto stream = context.SS->CdcStreamInfos.at(streamPath.Base()->PathId);
 
         Y_ABORT_UNLESS(stream->AlterVersion != 0);
         Y_ABORT_UNLESS(stream->AlterData);

@@ -46,7 +46,8 @@ THolder<TDropPlan> CollectExternalObjects(TOperationContext& context, const TPat
 
     // 1. Find CDC streams on source tables (these are OUTSIDE the backup collection)
     // Group them by table for efficient multi-stream drops
-    for (const auto& [pathId, cdcStreamInfo] : context.SS->CdcStreams) {
+    for (const auto& pathId : context.SS->CdcStreams.List()) {
+        const auto cdcStreamInfo = context.SS->CdcStreams.Find(pathId);
         if (!context.SS->PathsById.contains(pathId)) {
             continue;
         }

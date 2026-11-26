@@ -2,12 +2,12 @@
 #include "schemeshard__operation_common.h"
 #include "schemeshard__operation_part.h"
 #include "schemeshard__operation_states.h"
-#include "schemeshard_cdc_stream_common.h"
 #include "schemeshard_impl.h"
 #include "schemeshard_tx_infly.h"
 
 #include <ydb/core/base/subdomain.h>
 #include <ydb/core/mind/hive/hive.h>
+#include <ydb/core/tx/schemeshard/cdc_stream/at_table.h>
 
 #define YDB_LOG_THIS_FILE_COMPONENT NKikimrServices::FLAT_TX_SCHEMESHARD
 
@@ -271,7 +271,7 @@ public:
 
             if (!hasCdcChanges) {
                 for (const auto& [name, id] : srcPath->GetChildren()) {
-                    if (context.SS->CdcStreams.contains(id) && context.SS->PathsById.contains(id)) {
+                    if (context.SS->CdcStreams.Find(id) && context.SS->PathsById.contains(id)) {
                         auto streamPath = context.SS->PathsById.at(id);
                         if (streamPath->IsCdcStream() &&
                             streamPath->PathState == TPathElement::EPathState::EPathStateDrop &&
@@ -345,26 +345,21 @@ public:
 
             context.OnComplete.PublishToSchemeBoard(OperationId, srcPathId);
 
-            if (txState->CdcPathId != InvalidPathId && context.SS->CdcStreams.contains(txState->CdcPathId)) {
-                auto stream = context.SS->CdcStreams.at(txState->CdcPathId);
-                if (stream->AlterData) {
-                    stream->FinishAlter();
-                    context.SS->PersistCdcStream(db, txState->CdcPathId);
-                }
+            if (const auto stream = context.SS->CdcStreams.Find(txState->CdcPathId); stream && stream->AlterData) {
+                NCdcStreamAtTable::FinishCdcStreamAlter(*context.SS, db, txState->CdcPathId);
             }
 
             for (const auto& [name, id] : srcPath->GetChildren()) {
                 if (id == txState->CdcPathId) continue;
 
-                if (context.SS->CdcStreams.contains(id)) {
+                if (context.SS->CdcStreams.Find(id)) {
                     auto streamPath = context.SS->PathsById.at(id);
 
                     if (streamPath->IsCdcStream() &&
                         streamPath->PathState == TPathElement::EPathState::EPathStateDrop &&
                         streamPath->DropTxId == OperationId.GetTxId()) {
 
-                        context.SS->PersistRemoveCdcStream(db, id);
-                        context.SS->CdcStreams.erase(id);
+                        NCdcStreamAtTable::RemoveCdcStream(*context.SS, db, id);
 
                         Y_ABORT_UNLESS(!streamPath->Dropped());
                         streamPath->SetDropped(step, OperationId.GetTxId());
