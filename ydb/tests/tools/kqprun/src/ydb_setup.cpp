@@ -10,8 +10,6 @@
 #include <ydb/core/kqp/script_executions/table_queries/kqp_script_executions.h>
 #include <ydb/core/testlib/basics/storage.h>
 #include <ydb/core/testlib/test_client.h>
-#include <ydb/core/tx/cdc_aggregator/public/events.h>
-#include <ydb/core/tx/cdc_aggregator/service/service.h>
 #include <ydb/core/tx/replication/service/service.h>
 
 #include <ydb/library/aws_init/aws.h>
@@ -586,9 +584,6 @@ private:
             const auto replication =
                 GetRuntime()->Register(NKikimr::NReplication::CreateReplicationService(), node, userPool, NActors::TMailboxType::HTSwap);
             GetRuntime()->RegisterService(NKikimr::NReplication::MakeReplicationServiceId(nodeId), replication, node);
-            const auto cdc =
-                GetRuntime()->Register(NKikimr::NCdcAggregator::CreateCdcAggregatorService(), node, userPool, NActors::TMailboxType::HTSwap);
-            GetRuntime()->RegisterService(NKikimr::NCdcAggregator::MakeCdcAggregatorServiceId(nodeId), cdc, node);
 
             // The basic runtime can send its control subscription before the tenant dispatcher exists.
             GetRuntime()->Register(NKikimr::NConsole::CreateImmediateControlsConfigurator(

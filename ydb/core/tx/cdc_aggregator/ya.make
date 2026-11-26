@@ -1,5 +1,0 @@
-RECURSE(
-    public
-    service
-    tablet
-)

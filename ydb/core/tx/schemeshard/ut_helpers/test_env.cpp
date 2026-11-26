@@ -674,7 +674,6 @@ NSchemeShardUT_Private::TTestEnv::TTestEnv(TTestActorRuntime& runtime, const TTe
     app.SetEnableMoveIndex(opts.EnableMoveIndex_);
     app.SetEnableRebuildIndex(opts.EnableRebuildIndex_);
     app.SetEnableChangefeedInitialScan(opts.EnableChangefeedInitialScan_);
-    app.SetEnableCdcAggregator(opts.EnableCdcAggregator_);
     app.SetEnableCdcKeyRangeHeartbeats(opts.EnableCdcKeyRangeHeartbeats_);
     app.SetEnableNotNullDataColumns(opts.EnableNotNullDataColumns_);
     app.SetEnableAlterDatabaseCreateHiveFirst(opts.EnableAlterDatabaseCreateHiveFirst_);

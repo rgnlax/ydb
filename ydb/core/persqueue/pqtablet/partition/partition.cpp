@@ -752,9 +752,6 @@ void TPartition::AddMetaKey(TEvKeyValue::TEvRequest* request) {
     meta.SetSubDomainOutOfSpace(SubDomainOutOfSpace);
     meta.SetEndWriteTimestamp(PendingWriteTimestamp.MilliSeconds());
     meta.SetNextMessageIdDeduplicatorWAL(MessageIdDeduplicator.NextMessageIdDeduplicatorWAL);
-    if (!LastEmittedHeartbeat.IsMin()) {
-        LastEmittedHeartbeat.ToProto(meta.MutableLastEmittedHeartbeat());
-    }
 
     if (IsSupportive()) {
         auto* counterData = meta.MutableCounterData();
@@ -4571,8 +4568,6 @@ TPartition::EProcessResult TPartition::PreProcessUserActionOrTransaction(TMessag
         result = PreProcessRequest(msg.GetDeregisterMessageGroup(), affectedSourceIdsAndConsumers);
     } else if (msg.IsSplitMessageGroup()) {
         result = PreProcessRequest(msg.GetSplitMessageGroup(), affectedSourceIdsAndConsumers);
-    } else if (msg.IsEmitHeartbeat()) {
-        result = PreProcessRequest(msg.GetEmitHeartbeat(), affectedSourceIdsAndConsumers);
     } else {
         PQ_ENSURE(msg.IsOwnership());
     }
@@ -4602,8 +4597,6 @@ bool TPartition::ExecUserActionOrTransaction(TMessage& msg,
         ExecRequest(msg.GetDeregisterMessageGroup(), *Parameters);
     } else if (msg.IsSplitMessageGroup()) {
         ExecRequest(msg.GetSplitMessageGroup(), *Parameters);
-    } else if (msg.IsEmitHeartbeat()) {
-        ExecRequest(msg.GetEmitHeartbeat(), *Parameters, request);
     } else {
         PQ_ENSURE(msg.IsOwnership());
     }

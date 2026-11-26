@@ -1896,10 +1896,6 @@ struct TShardInfo {
     static TShardInfo TestShardSetInfo(TTxId txId, TPathId pathId) {
         return TShardInfo(txId, pathId, ETabletType::TestShard);
     }
-
-    static TShardInfo CdcAggregatorInfo(TTxId txId, TPathId pathId) {
-        return TShardInfo(txId, pathId, ETabletType::CdcAggregator);
-    }
 };
 
 /**
@@ -3733,14 +3729,12 @@ struct TCdcStreamInfo
 
         AlterVersion = AlterData->AlterVersion;
         static_cast<TCdcStreamSettings&>(*this) = static_cast<TCdcStreamSettings&>(*AlterData);
-        AggregatorShardIdx = AlterData->AggregatorShardIdx;
 
         AlterData.Reset();
     }
 
     ui64 AlterVersion = 1;
     TCdcStreamInfo::TPtr AlterData = nullptr;
-    TShardIdx AggregatorShardIdx = InvalidShardIdx;
 
     TMap<TShardIdx, TShardStatus> ScanShards;
     THashSet<TShardIdx> PendingShards;

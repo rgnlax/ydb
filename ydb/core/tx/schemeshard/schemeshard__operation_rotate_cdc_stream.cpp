@@ -1,7 +1,6 @@
 #include "schemeshard__operation_rotate_cdc_stream.h"
 
 #include "schemeshard__operation_common.h"
-#include "schemeshard__operation_create_cdc_stream.h"
 #include "schemeshard__operation_part.h"
 #include "schemeshard_cdc_stream_common.h"
 
@@ -20,9 +19,7 @@ public:
     explicit TPropose(TOperationId id)
         : OperationId(id)
     {
-        IgnoreMessages({
-            TEvHive::TEvCreateTabletReply::EventType,
-        });
+        IgnoreMessages({});
     }
 
     bool ProgressState(TOperationContext& context) override {
@@ -92,12 +89,12 @@ public:
     virtual const char* Name() const override final { return "TRotateCdcStream"; }
 
 private:
+    static TTxState::ETxState NextState() {
+        return TTxState::Propose;
+    }
+
     TTxState::ETxState NextState(TTxState::ETxState state) const override {
         switch (state) {
-        case TTxState::CreateParts:
-            return TTxState::ConfigureParts;
-        case TTxState::ConfigureParts:
-            return TTxState::Propose;
         case TTxState::Propose:
             return TTxState::Done;
         default:
@@ -107,10 +104,6 @@ private:
 
     TSubOperationState::TPtr SelectStateFunc(TTxState::ETxState state) override {
         switch (state) {
-        case TTxState::CreateParts:
-            return MakeHolder<TCreateParts>(OperationId);
-        case TTxState::ConfigureParts:
-            return MakeHolder<TConfigureParts>(OperationId);
         case TTxState::Propose:
             return MakeHolder<TPropose>(OperationId);
         case TTxState::Done:
@@ -325,9 +318,9 @@ public:
             return result;
         }
 
-        if (newStreamDesc.HasHeartbeatMode() || newStreamDesc.HasAggregatorTabletId()) {
+        if (newStreamDesc.HasHeartbeatMode()) {
             result->SetError(NKikimrScheme::StatusPreconditionFailed,
-                "HeartbeatMode and AggregatorTabletId are assigned by SchemeShard and cannot be set in a request");
+                "HeartbeatMode is assigned by SchemeShard and cannot be set in a request");
             return result;
         }
 
@@ -397,14 +390,6 @@ public:
             return result;
         }
 
-        TMaybe<TChannelsBindings> aggregatorChannels;
-        if (ShouldAggregateHeartbeats(newStreamDesc)) {
-            aggregatorChannels = CheckCdcAggregatorCanBeCreated(newStreamOp, newStreamPath, context, result);
-            if (!aggregatorChannels) {
-                return result;
-            }
-        }
-
         auto guard = context.DbGuard();
         context.MemChanges.GrabPath(context.SS, oldStreamPath.Base()->PathId);
         context.MemChanges.GrabCdcStream(context.SS, oldStreamPath.Base()->PathId);
@@ -456,16 +441,12 @@ public:
 
         newStream->AlterData->HeartbeatMode = *heartbeatMode;
 
-        if (aggregatorChannels) {
-            PlanCdcAggregatorCreation(OperationId, newStreamPath, *aggregatorChannels, context);
-        }
-
         newStreamPath.DomainInfo()->IncPathsInside(context.SS);
         IncAliveChildrenSafeWithUndo(OperationId, tablePath, context); // for correct discard of ChildrenExist prop
 
         context.OnComplete.ActivateTx(OperationId);
 
-        SetState(txState.State);
+        SetState(NextState());
         return result;
     }
 

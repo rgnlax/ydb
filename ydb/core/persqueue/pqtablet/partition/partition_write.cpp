@@ -519,14 +519,6 @@ void TPartition::AnswerCurrentWrites(const TActorContext& ctx) {
             }
 
             ReplyOk(ctx, response.GetCookie(), response.Span);
-        } else if (response.IsEmitHeartbeat()) {
-            const auto& version = response.GetEmitHeartbeat().EmittedVersion;
-            auto reply = MakeReplyOk(response.GetCookie(), false);
-            auto* result = reply->Response->MutablePartitionResponse()->MutableCmdEmitHeartbeatResult();
-            result->SetStep(version.Step);
-            result->SetTxId(version.TxId);
-            ctx.Send(TabletActorId, reply.Release());
-            response.Span.EndOk();
         } else {
             PQ_ENSURE(false)("reason", "Unexpected message")("topic", TopicName())("cookie", response.GetCookie())("index", response.Body.index());
         }
@@ -1021,12 +1013,6 @@ void TPartition::HandleOnWrite(TEvPQ::TEvSplitMessageGroup::TPtr& ev, const TAct
     EmplacePendingRequest(std::move(msg), NWilson::TSpan(TWilsonTopic::TopicDetailed, NWilson::TTraceId(ev->TraceId), "Topic.Partition.SplitMessageGroup"), ctx);
 }
 
-void TPartition::HandleOnIdle(TEvPQ::TEvEmitHeartbeat::TPtr& ev, const TActorContext& ctx)
-{
-    EmplacePendingRequest(TEmitHeartbeatMsg(*ev->Get()), NWilson::TSpan(TWilsonTopic::TopicDetailed, NWilson::TTraceId(ev->TraceId), "Topic.Partition.EmitHeartbeat"), ctx);
-    HandlePendingRequests(ctx);
-}
-
 void TPartition::StartProcessChangeOwnerRequests(const TActorContext& ctx)
 {
     ctx.Send(ctx.SelfID, new TEvPQ::TEvProcessChangeOwnerRequests());
@@ -1168,32 +1154,6 @@ void TPartition::ExecRequest(TSplitMessageGroupMsg& msg, ProcessParameters& para
         body.AssignedOffset = parameters.CurOffset;
         parameters.SourceIdBatch.RegisterSourceId(body.SourceId, body.SeqNo, parameters.CurOffset, CurrentTimestamp, std::move(keyRange), true);
     }
-}
-
-TPartition::EProcessResult TPartition::PreProcessRequest(TEmitHeartbeatMsg& msg,
-                                                         TAffectedSourceIdsAndConsumers&)
-{
-    if (!CanWrite()) {
-        ScheduleReplyError(msg.Cookie, false, InactivePartitionErrorCode,
-            TStringBuilder() << "Write to inactive partition " << Partition.OriginalPartitionId);
-        return EProcessResult::ContinueDrop;
-    }
-    if (DiskIsFull) {
-        ScheduleReplyError(msg.Cookie, false,
-                           NPersQueue::NErrorCode::WRITE_ERROR_DISK_IS_FULL,
-                           "Disk is full");
-        return EProcessResult::ContinueDrop;
-    }
-    return EProcessResult::Continue;
-}
-
-void TPartition::ExecRequest(TEmitHeartbeatMsg& msg, ProcessParameters& parameters, TEvKeyValue::TEvRequest* request) {
-    const auto& partitionedBlob = BlobEncoder.PartitionedBlob;
-    const bool partitionedBlobInProgress = partitionedBlob.IsInited() && !partitionedBlob.IsComplete();
-    if (msg.Heartbeat.Version > LastEmittedHeartbeat && !partitionedBlobInProgress) {
-        EmitHeartbeat(msg.Heartbeat, parameters, request);
-    }
-    msg.EmittedVersion = LastEmittedHeartbeat;
 }
 
 TPartition::EProcessResult TPartition::PreProcessRequest(TWriteMsg& p,

@@ -388,7 +388,6 @@ struct TUserTable : public TThrRefBase {
         bool UserSIDs = false;
         bool TraceIds = false;
         EHeartbeatMode HeartbeatMode = NKikimrSchemeOp::ECdcStreamHeartbeatModeDirect;
-        ui64 AggregatorTabletId = 0;
         ECompression Compression = NKikimrSchemeOp::ECdcStreamCompressionNone;
         i32 CompressionLevel = 0;
 
@@ -405,7 +404,6 @@ struct TUserTable : public TThrRefBase {
             , UserSIDs(streamDesc.GetUserSIDs())
             , TraceIds(streamDesc.GetTraceIds())
             , HeartbeatMode(streamDesc.GetHeartbeatMode())
-            , AggregatorTabletId(streamDesc.GetAggregatorTabletId())
             , Compression(streamDesc.GetCompression())
             , CompressionLevel(streamDesc.HasCompressionLevel() ? streamDesc.GetCompressionLevel() : 0)
         {

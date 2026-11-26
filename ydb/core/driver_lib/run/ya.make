@@ -78,6 +78,7 @@ PEERDIR(
     ydb/core/kqp/common/warmup
     ydb/core/kqp/federated_query/actors
     ydb/core/kqp/rm_service
+    ydb/core/kqp/runtime/scheduler
     ydb/core/kqp/script_executions/finalization
     ydb/core/load_test
     ydb/core/log_backend
@@ -85,6 +86,7 @@ PEERDIR(
     ydb/core/metering
     ydb/core/mind
     ydb/core/mind/address_classification
+    ydb/core/mind/bootstrapper
     ydb/core/mind/bscontroller
     ydb/core/mind/hive
     ydb/core/mon
@@ -117,8 +119,6 @@ PEERDIR(
     ydb/core/tracing
     ydb/core/transfer
     ydb/core/tx
-    ydb/core/tx/cdc_aggregator/service
-    ydb/core/tx/cdc_aggregator/tablet
     ydb/core/tx/columnshard
     ydb/core/tx/columnshard/column_fetching
     ydb/core/tx/columnshard/data_accessor/cache_policy

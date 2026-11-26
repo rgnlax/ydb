@@ -91,7 +91,6 @@ public:
     FEATURE_FLAG_SETTER(EnableDataShardDetailedMetrics)
     FEATURE_FLAG_SETTER(EnableTopicDeferredPublish)
     FEATURE_FLAG_SETTER(TransferInternalDataDecompression)
-    FEATURE_FLAG_SETTER(EnableCdcAggregator)
     FEATURE_FLAG_SETTER(EnableCdcKeyRangeHeartbeats)
     #undef FEATURE_FLAG_SETTER
 };
