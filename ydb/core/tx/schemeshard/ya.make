@@ -281,7 +281,8 @@ SRCS(
     schemeshard_cdc_stream_common.cpp
     schemeshard_cdc_stream_registry.cpp
     schemeshard_cdc_stream_scan.cpp
-    schemeshard_cdc_stream_topic_layout.cpp
+    schemeshard_cdc_stream_topic_partitioning.cpp
+    schemeshard_cdc_stream_topic_pipeline.cpp
     schemeshard_continuous_backup_cleaner.cpp
     schemeshard_incremental_restore_scan.cpp
     schemeshard_domain_links.cpp

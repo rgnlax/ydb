@@ -28,6 +28,8 @@ namespace NKikimr::NSchemeShard::NCdc {
         bool HasCdcStream(const TPathId& streamPathId) const;
         std::optional<TCdcStreamSettings> FindCdcStreamSettings(const TPathId& streamPathId) const;
         ui64 GetCdcStreamVersion(const TPathId& streamPathId) const;
+        std::optional<NKikimrSchemeOp::ECdcStreamHeartbeatMode> FindPendingCdcStreamHeartbeatMode(
+            const TPathId& streamPathId) const;
 
         NKikimrSchemeOp::TCdcStreamDescription MakeCdcStreamDescription(
             const TPathId& streamPathId,

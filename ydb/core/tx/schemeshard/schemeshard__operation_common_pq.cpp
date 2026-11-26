@@ -1,5 +1,5 @@
 #include "schemeshard__operation_common.h"
-#include "schemeshard_cdc_stream_topic_layout.h"
+#include "schemeshard_cdc_stream_topic_pipeline.h"
 #include "schemeshard_private.h"
 
 #include <ydb/core/base/hive.h>

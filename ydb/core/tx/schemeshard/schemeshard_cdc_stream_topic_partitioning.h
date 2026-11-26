@@ -1,20 +1,10 @@
 #pragma once
 
-#include "schemeshard__operation_part.h"
-#include "schemeshard_info_types.h"
-
 #include <ydb/core/base/feature_flags.h>
 #include <ydb/core/protos/flat_scheme_op.pb.h>
-#include <ydb/core/protos/pqconfig.pb.h>
 
 #include <memory>
 #include <optional>
-
-namespace NKikimr::NSchemeShard {
-
-class TPath;
-
-}
 
 namespace NKikimr::NSchemeShard::NCdc {
 
@@ -27,35 +17,37 @@ namespace NKikimr::NSchemeShard::NCdc {
         ui32 MaxPartitionCount = 0;
     };
 
-    class ICdcStreamTopicLayout {
+    struct TCdcStreamTopicAutoPartitioning {
+        ui32 MinPartitionCount = 0;
+        ui32 MaxPartitionCount = 0;
+    };
+
+    class ICdcStreamTopicPartitioning {
     public:
-        virtual ~ICdcStreamTopicLayout() = default;
+        virtual ~ICdcStreamTopicPartitioning() = default;
 
         virtual TCdcPqPartParams MakePartParams(
             const NKikimrSchemeOp::TCreateCdcStream& op,
             ui64 tablePartitionCount,
             ui64 maxShardsInPath) const = 0;
 
-        virtual NKikimrSchemeOp::TPersQueueGroupDescription MakePersQueueGroup(
+        virtual std::optional<TCdcStreamTopicAutoPartitioning> MakeAutoPartitioning(
             const NKikimrSchemeOp::TCreateCdcStream& op,
-            const TTableInfo& table,
-            const TVector<TString>& boundaries,
-            ui64 maxShardsInPath) const = 0;
+            const TCdcPqPartParams& params) const = 0;
 
-        virtual NKikimrPQ::TBootstrapConfig MakeBootstrapConfig(
-            const TTableInfo& table,
-            const THashMap<TShardIdx, TShardInfo>& shardInfos) const = 0;
+        virtual bool IsPartitionedByTableKey() const = 0;
+        virtual bool IsSplitByTableKey() const = 0;
     };
 
-    std::unique_ptr<ICdcStreamTopicLayout> MakeCdcStreamTopicLayout(NKikimrSchemeOp::ECdcStreamHeartbeatMode heartbeatMode);
-
-    std::unique_ptr<ICdcStreamTopicLayout> MakeCdcStreamTopicLayout(
+    std::unique_ptr<ICdcStreamTopicPartitioning> MakeCdcStreamTopicPartitioning(
         const NKikimrSchemeOp::TCreateCdcStream& op,
         const TFeatureFlags& featureFlags);
 
     std::pair<std::optional<NKikimrSchemeOp::ECdcStreamHeartbeatMode>, TString> ChooseHeartbeatMode(
         const NKikimrSchemeOp::TCreateCdcStream& op,
         const TFeatureFlags& featureFlags);
+
+    bool IsSplitByTableKey(NKikimrSchemeOp::ECdcStreamHeartbeatMode heartbeatMode);
 
     // Decides the changefeed topic shape from the source table size.
     // Replication autopartitioning caps max at maxShardsInPath and min at that limit / 4.
@@ -65,9 +57,5 @@ namespace NKikimr::NSchemeShard::NCdc {
         ui64 tablePartitionCount,
         ui64 maxShardsInPath,
         const TFeatureFlags& featureFlags);
-
-    std::optional<NKikimrPQ::TBootstrapConfig> MakeCdcStreamTopicBootstrapConfig(
-        const TOperationContext& context,
-        const TPath& topicPath);
 
 } // namespace NKikimr::NSchemeShard::NCdc

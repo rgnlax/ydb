@@ -1,7 +1,7 @@
 #include "schemeshard_cdc_stream_registry.h"
 
 #include "schemeshard__operation_part.h"
-#include "schemeshard_cdc_stream_topic_layout.h"
+#include "schemeshard_cdc_stream_topic_partitioning.h"
 #include "schemeshard_impl.h"
 
 namespace NKikimr::NSchemeShard::NCdc {
@@ -40,6 +40,18 @@ std::optional<TCdcStreamSettings> TCdcStreamRegistry::FindCdcStreamSettings(cons
 
 ui64 TCdcStreamRegistry::GetCdcStreamVersion(const TPathId& streamPathId) const {
     return GetCdcStream(streamPathId)->AlterVersion;
+}
+
+std::optional<NKikimrSchemeOp::ECdcStreamHeartbeatMode> TCdcStreamRegistry::FindPendingCdcStreamHeartbeatMode(
+        const TPathId& streamPathId) const
+{
+    const auto it = Self.CdcStreams.find(streamPathId);
+    if (it == Self.CdcStreams.end()) {
+        return std::nullopt;
+    }
+
+    const auto& stream = it->second->AlterData ? it->second->AlterData : it->second;
+    return stream->HeartbeatMode;
 }
 
 NKikimrSchemeOp::TCdcStreamDescription TCdcStreamRegistry::MakeCdcStreamDescription(

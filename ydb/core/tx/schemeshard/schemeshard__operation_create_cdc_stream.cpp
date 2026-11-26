@@ -706,22 +706,14 @@ void DoCreatePqPart(
     outTx.SetFailOnExist(!acceptExisted);
 
     const ui64 maxShardsInPath = streamPath.DomainInfo()->GetSchemeLimits().MaxShardsInPath;
-    const auto topicLayout = MakeCdcStreamTopicLayout(op, AppData()->FeatureFlags);
-
-    auto& desc = *outTx.MutableCreatePersQueueGroup();
-    desc = topicLayout->MakePersQueueGroup(op, *table, boundaries, maxShardsInPath);
-    desc.SetName("streamImpl");
-
-    auto& pqConfig = *desc.MutablePQTabletConfig();
-    pqConfig.SetTopicName(streamName);
-    pqConfig.SetTopicPath(streamPath.Child("streamImpl").PathString());
-    pqConfig.SetMeteringMode(NKikimrPQ::TPQTabletConfig::METERING_MODE_REQUEST_UNITS);
-
-    auto& partitionConfig = *pqConfig.MutablePartitionConfig();
-    partitionConfig.SetLifetimeSeconds(op.GetRetentionPeriodSeconds());
-    partitionConfig.SetWriteSpeedInBytesPerSecond(1_MB); // TODO: configurable write speed
-    partitionConfig.SetBurstSize(1_MB); // TODO: configurable burst
-    partitionConfig.SetMaxCountInPartition(Max<i32>());
+    const TCdcStreamTopicPipeline topicPipeline(MakeCdcStreamTopicPartitioning(op, AppData()->FeatureFlags));
+    *outTx.MutableCreatePersQueueGroup() = topicPipeline.MakePersQueueGroup(
+        op,
+        streamName,
+        streamPath.Child("streamImpl").PathString(),
+        *table,
+        boundaries,
+        maxShardsInPath);
 
     result.push_back(CreateNewPQ(NextPartId(opId, result), outTx));
 }
