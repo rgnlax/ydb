@@ -17,35 +17,38 @@ TString MakeFullKeyBound(const TString& bound, size_t keySize) {
 
 } // anonymous
 
-TKeyRangeCdcStreamFeature::TKeyRangeCdcStreamFeature(const TFeatureFlags& featureFlags)
-    : KeyRangeHeartbeatsEnabled(featureFlags.GetEnableCdcKeyRangeHeartbeats())
-{
+TStringBuf TKeyRangeCdcStreamFeature::GetName() const {
+    return "key_range";
 }
 
-TString TKeyRangeCdcStreamFeature::OnCreateStream(
-        const NKikimrSchemeOp::TCreateCdcStream& op,
-        TCdcStreamInfo& stream) const
-{
-    if (!IsRequestedBy(op)) {
-        return {};
-    }
-
-    if (op.HasTopicPartitions() || op.GetTopicAutoPartitioning()) {
-        return "TopicPartitions and TopicAutoPartitioning are not supported for CDC streams with key range heartbeats";
-    }
-
-    stream.HeartbeatMode = NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange;
-    return {};
+TStringBuf TKeyRangeCdcStreamFeature::GetTitle() const {
+    return "key range heartbeats";
 }
 
-std::optional<TCdcPqPartParams> TKeyRangeCdcStreamFeature::OnCreateTopic(
-        const NKikimrSchemeOp::TCreateCdcStream& op,
+bool TKeyRangeCdcStreamFeature::IsRequestedBy(const TCdcStreamRequest& request) const {
+    const auto& streamDesc = request.Op.GetStreamDescription();
+    return request.FeatureFlags.GetEnableCdcKeyRangeHeartbeats()
+        && streamDesc.GetResolvedTimestampsIntervalMs() > 0
+        && IsReplicationSupport(streamDesc, "supports_key_range_autopartitioning");
+}
+
+TCdcStreamDecisions TKeyRangeCdcStreamFeature::GetDecisions() const {
+    return TCdcStreamDecisions{
+        .HeartbeatMode = NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange,
+        .TopicShape = true,
+    };
+}
+
+TVector<TStringBuf> TKeyRangeCdcStreamFeature::GetOverrides() const {
+    return {"replication_autopartitioning"};
+}
+
+TCdcPqPartParams TKeyRangeCdcStreamFeature::MakeTopicShape(
+        const TCdcStreamRequest& request,
         ui64 tablePartitionCount,
         ui64 maxShardsInPath) const
 {
-    if (!IsRequestedBy(op)) {
-        return std::nullopt;
-    }
+    Y_UNUSED(request);
 
     const ui64 maxPartitionCountLimit = std::min<ui64>(maxShardsInPath, Max<ui32>());
 
@@ -59,36 +62,26 @@ std::optional<TCdcPqPartParams> TKeyRangeCdcStreamFeature::OnCreateTopic(
     };
 }
 
-void TKeyRangeCdcStreamFeature::OnTopicSources(
-        const TCdcStreamInfo& stream,
+std::optional<NKikimrPQ::TPartitionKeyRange> TKeyRangeCdcStreamFeature::MakeSourceKeyRange(
         const TTableInfo& table,
-        NKikimrPQ::TBootstrapConfig& sources) const
+        size_t shardIndex) const
 {
-    if (stream.HeartbeatMode != NKikimrSchemeOp::ECdcStreamHeartbeatModeKeyRange) {
-        return;
-    }
-
     const auto& partitions = table.GetPartitions();
-    Y_ABORT_UNLESS(static_cast<size_t>(sources.ExplicitMessageGroupsSize()) == partitions.size());
+    Y_ABORT_UNLESS(shardIndex < partitions.size());
 
-    for (size_t i = 0; i < partitions.size(); ++i) {
-        auto& mg = *sources.MutableExplicitMessageGroups(i);
-
-        // Pass the DataShard key range to a key range CDC topic: PQ registers the source only in its partitions
-        if (i > 0) {
-            mg.MutableKeyRange()->SetFromBound(MakeFullKeyBound(partitions[i - 1]->EndOfRange, table.KeyColumnIds.size()));
-        }
-        if (i + 1 < partitions.size()) {
-            mg.MutableKeyRange()->SetToBound(MakeFullKeyBound(partitions[i]->EndOfRange, table.KeyColumnIds.size()));
-        }
+    if (partitions.size() == 1) {
+        return std::nullopt;
     }
-}
 
-bool TKeyRangeCdcStreamFeature::IsRequestedBy(const NKikimrSchemeOp::TCreateCdcStream& op) const {
-    const auto& streamDesc = op.GetStreamDescription();
-    return KeyRangeHeartbeatsEnabled
-        && streamDesc.GetResolvedTimestampsIntervalMs() > 0
-        && IsReplicationSupport(streamDesc, "supports_key_range_autopartitioning");
+    // Pass the DataShard key range to a key range CDC topic: PQ registers the source only in its partitions
+    NKikimrPQ::TPartitionKeyRange keyRange;
+    if (shardIndex > 0) {
+        keyRange.SetFromBound(MakeFullKeyBound(partitions[shardIndex - 1]->EndOfRange, table.KeyColumnIds.size()));
+    }
+    if (shardIndex + 1 < partitions.size()) {
+        keyRange.SetToBound(MakeFullKeyBound(partitions[shardIndex]->EndOfRange, table.KeyColumnIds.size()));
+    }
+    return keyRange;
 }
 
 } // namespace NKikimr::NSchemeShard::NCdc

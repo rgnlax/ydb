@@ -4,14 +4,32 @@
 
 namespace NKikimr::NSchemeShard::NCdc {
 
-std::optional<TCdcPqPartParams> TReplicationAutoPartitioningCdcStreamFeature::OnCreateTopic(
-        const NKikimrSchemeOp::TCreateCdcStream& op,
+TStringBuf TReplicationAutoPartitioningCdcStreamFeature::GetName() const {
+    return "replication_autopartitioning";
+}
+
+TStringBuf TReplicationAutoPartitioningCdcStreamFeature::GetTitle() const {
+    return "replication topic autopartitioning";
+}
+
+bool TReplicationAutoPartitioningCdcStreamFeature::IsRequestedBy(const TCdcStreamRequest& request) const {
+    return IsReplicationSupport(request.Op.GetStreamDescription(), "supports_topic_autopartitioning");
+}
+
+TCdcStreamDecisions TReplicationAutoPartitioningCdcStreamFeature::GetDecisions() const {
+    return TCdcStreamDecisions{.TopicShape = true};
+}
+
+TVector<TStringBuf> TReplicationAutoPartitioningCdcStreamFeature::GetOverrides() const {
+    return {"topic_autopartitioning", "topic_partitions"};
+}
+
+TCdcPqPartParams TReplicationAutoPartitioningCdcStreamFeature::MakeTopicShape(
+        const TCdcStreamRequest& request,
         ui64 tablePartitionCount,
         ui64 maxShardsInPath) const
 {
-    if (!IsReplicationSupport(op.GetStreamDescription(), "supports_topic_autopartitioning")) {
-        return std::nullopt;
-    }
+    const auto& op = request.Op;
 
     // Autopartitioned replication topics are hash-partitioned. Cap that split
     // range by the path shard limit so a large table still gets a creatable topic.

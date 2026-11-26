@@ -8,13 +8,17 @@ std::pair<TCdcStreamInfo::TPtr, TString> MakeCdcStream(
         const NKikimrSchemeOp::TCreateCdcStream& op,
         const TFeatureFlags& featureFlags)
 {
+    const auto features = MakeCdcStreamFeatures();
+    const auto [choice, error] = ChooseCdcStreamFeatures(features, TCdcStreamRequest{op, featureFlags});
+    if (!choice) {
+        return {nullptr, error};
+    }
+
     auto stream = TCdcStreamInfo::Create(op.GetStreamDescription());
     Y_ABORT_UNLESS(stream);
 
-    for (const auto& feature : MakeCdcStreamFeatures(featureFlags)) {
-        if (auto error = feature->OnCreateStream(op, *stream->AlterData); !error.empty()) {
-            return {nullptr, std::move(error)};
-        }
+    if (choice->HeartbeatMode) {
+        stream->AlterData->HeartbeatMode = *choice->HeartbeatMode->GetDecisions().HeartbeatMode;
     }
 
     return {stream, TString()};

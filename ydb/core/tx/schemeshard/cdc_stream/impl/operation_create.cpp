@@ -712,8 +712,8 @@ void DoCreatePqPart(
 
     const ui64 maxShardsInPath = streamPath.DomainInfo()->GetSchemeLimits().MaxShardsInPath;
     *outTx.MutableCreatePersQueueGroup() = MakeCdcStreamTopic(
-        MakeCdcStreamFeatures(AppData()->FeatureFlags),
-        op,
+        MakeCdcStreamFeatures(),
+        TCdcStreamRequest{op, AppData()->FeatureFlags},
         streamName,
         streamPath.Child("streamImpl").PathString(),
         *table,

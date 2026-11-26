@@ -64,31 +64,29 @@ void AddPartitionKeySchemaAndBoundaries(
 
 TCdcPqPartParams MakeCdcStreamTopicShape(
         const TCdcStreamFeatures& features,
-        const NKikimrSchemeOp::TCreateCdcStream& op,
+        const TCdcStreamRequest& request,
         ui64 tablePartitionCount,
         ui64 maxShardsInPath)
 {
-    for (const auto& feature : features) {
-        if (auto shape = feature->OnCreateTopic(op, tablePartitionCount, maxShardsInPath)) {
-            return *shape;
-        }
+    const auto [choice, _] = ChooseCdcStreamFeatures(features, request);
+    if (choice && choice->TopicShape) {
+        return choice->TopicShape->MakeTopicShape(request, tablePartitionCount, maxShardsInPath);
     }
 
-    return TCdcPqPartParams{
-        .TotalGroupCount = static_cast<ui32>(op.HasTopicPartitions() ? op.GetTopicPartitions() : tablePartitionCount),
-    };
+    return TCdcPqPartParams{.TotalGroupCount = static_cast<ui32>(tablePartitionCount)};
 }
 
 NKikimrSchemeOp::TPersQueueGroupDescription MakeCdcStreamTopic(
         const TCdcStreamFeatures& features,
-        const NKikimrSchemeOp::TCreateCdcStream& op,
+        const TCdcStreamRequest& request,
         const TString& streamName,
         const TString& topicPath,
         const TTableInfo& table,
         const TVector<TString>& boundaries,
         ui64 maxShardsInPath)
 {
-    const auto shape = MakeCdcStreamTopicShape(features, op, table.GetPartitions().size(), maxShardsInPath);
+    const auto& op = request.Op;
+    const auto shape = MakeCdcStreamTopicShape(features, request, table.GetPartitions().size(), maxShardsInPath);
 
     NKikimrSchemeOp::TPersQueueGroupDescription desc;
     desc.SetName("streamImpl");
@@ -127,24 +125,29 @@ NKikimrPQ::TBootstrapConfig MakeCdcStreamTopicSources(
         const TTableInfo& table,
         const THashMap<TShardIdx, TShardInfo>& shardInfos)
 {
+    const ICdcStreamFeature* heartbeatModeFeature = stream
+        ? FindHeartbeatModeFeature(features, stream->HeartbeatMode)
+        : nullptr;
+
     NKikimrPQ::TBootstrapConfig sources;
-    for (const auto* partition : table.GetPartitions()) {
-        const auto* shardInfo = shardInfos.FindPtr(partition->ShardIdx);
+    const auto& partitions = table.GetPartitions();
+    for (size_t i = 0; i < partitions.size(); ++i) {
+        const auto* shardInfo = shardInfos.FindPtr(partitions[i]->ShardIdx);
         Y_ABORT_UNLESS(shardInfo != nullptr);
 
         auto& mg = *sources.AddExplicitMessageGroups();
         mg.SetId(NPQ::NSourceIdEncoding::EncodeSimple(ToString(shardInfo->TabletID)));
 
+        if (heartbeatModeFeature) {
+            if (auto keyRange = heartbeatModeFeature->MakeSourceKeyRange(table, i)) {
+                *mg.MutableKeyRange() = std::move(*keyRange);
+            }
+        }
+
         //NOTE: Other CDC topics get no KeyRange on the group: nothing consumes the key ranges on the pqtablet side.
         // Routing is datashard-side over the topic partitioning, split continuity is
         // the change-exchange re-registration, and the table split/merge re-registration
         // produces rangeless ids anyway.
-    }
-
-    if (stream) {
-        for (const auto& feature : features) {
-            feature->OnTopicSources(*stream, table, sources);
-        }
     }
 
     return sources;
@@ -156,7 +159,7 @@ TCdcPqPartParams MakeCdcPqPartParams(
         ui64 maxShardsInPath,
         const TFeatureFlags& featureFlags)
 {
-    return MakeCdcStreamTopicShape(MakeCdcStreamFeatures(featureFlags), op, tablePartitionCount, maxShardsInPath);
+    return MakeCdcStreamTopicShape(MakeCdcStreamFeatures(), TCdcStreamRequest{op, featureFlags}, tablePartitionCount, maxShardsInPath);
 }
 
 std::optional<NKikimrPQ::TBootstrapConfig> MakeCdcStreamTopicBootstrapConfig(
@@ -176,7 +179,7 @@ std::optional<NKikimrPQ::TBootstrapConfig> MakeCdcStreamTopicBootstrapConfig(
 
     const auto stream = FindPendingCdcStream(*context.SS, streamPath.Base()->PathId);
     return MakeCdcStreamTopicSources(
-        MakeCdcStreamFeatures(AppData()->FeatureFlags),
+        MakeCdcStreamFeatures(),
         stream.Get(),
         *table,
         context.SS->ShardInfos);

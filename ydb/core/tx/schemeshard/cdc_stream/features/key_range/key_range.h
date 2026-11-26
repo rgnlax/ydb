@@ -2,32 +2,24 @@
 
 #include <ydb/core/tx/schemeshard/cdc_stream/features/feature.h>
 
-#include <ydb/core/base/feature_flags.h>
-
 namespace NKikimr::NSchemeShard::NCdc {
 
     class TKeyRangeCdcStreamFeature final: public ICdcStreamFeature {
     public:
-        explicit TKeyRangeCdcStreamFeature(const TFeatureFlags& featureFlags);
+        TStringBuf GetName() const override;
+        TStringBuf GetTitle() const override;
+        bool IsRequestedBy(const TCdcStreamRequest& request) const override;
+        TCdcStreamDecisions GetDecisions() const override;
+        TVector<TStringBuf> GetOverrides() const override;
 
-        TString OnCreateStream(
-            const NKikimrSchemeOp::TCreateCdcStream& op,
-            TCdcStreamInfo& stream) const override;
-
-        std::optional<TCdcPqPartParams> OnCreateTopic(
-            const NKikimrSchemeOp::TCreateCdcStream& op,
+        TCdcPqPartParams MakeTopicShape(
+            const TCdcStreamRequest& request,
             ui64 tablePartitionCount,
             ui64 maxShardsInPath) const override;
 
-        void OnTopicSources(
-            const TCdcStreamInfo& stream,
+        std::optional<NKikimrPQ::TPartitionKeyRange> MakeSourceKeyRange(
             const TTableInfo& table,
-            NKikimrPQ::TBootstrapConfig& sources) const override;
-
-    private:
-        bool IsRequestedBy(const NKikimrSchemeOp::TCreateCdcStream& op) const;
-
-        const bool KeyRangeHeartbeatsEnabled;
+            size_t shardIndex) const override;
     };
 
 } // namespace NKikimr::NSchemeShard::NCdc

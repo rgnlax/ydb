@@ -11,13 +11,13 @@ namespace NKikimr::NSchemeShard::NCdc {
 
     TCdcPqPartParams MakeCdcStreamTopicShape(
         const TCdcStreamFeatures& features,
-        const NKikimrSchemeOp::TCreateCdcStream& op,
+        const TCdcStreamRequest& request,
         ui64 tablePartitionCount,
         ui64 maxShardsInPath);
 
     NKikimrSchemeOp::TPersQueueGroupDescription MakeCdcStreamTopic(
         const TCdcStreamFeatures& features,
-        const NKikimrSchemeOp::TCreateCdcStream& op,
+        const TCdcStreamRequest& request,
         const TString& streamName,
         const TString& topicPath,
         const TTableInfo& table,

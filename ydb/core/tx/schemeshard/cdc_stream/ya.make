@@ -6,6 +6,7 @@ SRCS(
     features/replication_autopartitioning/replication_autopartitioning.cpp
     features/replication_capabilities.cpp
     features/topic_autopartitioning/topic_autopartitioning.cpp
+    features/topic_partitions/topic_partitions.cpp
     impl/at_table.cpp
     impl/operation_alter.cpp
     impl/operation_common.cpp
