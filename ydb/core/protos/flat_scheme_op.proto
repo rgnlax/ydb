@@ -1190,7 +1190,7 @@ enum ECdcStreamCompression {
 
 enum ECdcStreamHeartbeatMode {
     ECdcStreamHeartbeatModeDirect = 0;
-    ECdcStreamHeartbeatModeAggregated = 1;
+    reserved 1;
 }
 
 message TCdcStreamScanProgress {
@@ -1218,7 +1218,7 @@ message TCdcStreamDescription {
     optional ECdcStreamCompression Compression = 15 [default = ECdcStreamCompressionNone];
     optional int32 CompressionLevel = 16;
     optional ECdcStreamHeartbeatMode HeartbeatMode = 17;
-    optional fixed64 AggregatorTabletId = 18;
+    reserved 18;
 }
 
 message TCreateCdcStream {

@@ -14,7 +14,6 @@ PEERDIR(
     ydb/core/cms/console/events
     ydb/core/grpc_services
     ydb/core/testlib
-    ydb/core/tx/cdc_aggregator/service
     ydb/core/tx/replication/service
     ydb/core/util
     ydb/library/aclib

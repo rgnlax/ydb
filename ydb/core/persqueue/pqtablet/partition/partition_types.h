@@ -63,18 +63,6 @@ struct TSplitMessageGroupMsg {
     }
 };
 
-struct TEmitHeartbeatMsg {
-    ui64 Cookie;
-    THeartbeat Heartbeat;
-    TRowVersion EmittedVersion;
-
-    explicit TEmitHeartbeatMsg(TEvPQ::TEvEmitHeartbeat& ev)
-        : Cookie(ev.Cookie)
-        , Heartbeat(std::move(ev.Heartbeat))
-    {
-    }
-};
-
 
 struct TMessage {
     std::variant<
@@ -82,8 +70,7 @@ struct TMessage {
         TOwnershipMsg,
         TRegisterMessageGroupMsg,
         TDeregisterMessageGroupMsg,
-        TSplitMessageGroupMsg,
-        TEmitHeartbeatMsg
+        TSplitMessageGroupMsg
     > Body;
     TDuration QueueTime;    // baseline for request and duration for response
     TInstant WriteTimeBaseline;
@@ -112,8 +99,6 @@ struct TMessage {
             return std::get<3>(Body).Cookie;
         case 4:
             return std::get<4>(Body).Cookie;
-        case 5:
-            return std::get<5>(Body).Cookie;
         default:
             AFL_ENSURE(false)("reason", "unreachable")("index", Body.index());
         }
@@ -137,7 +122,6 @@ struct TMessage {
     DEFINE_CHECKER_GETTER(RegisterMessageGroup, 2)
     DEFINE_CHECKER_GETTER(DeregisterMessageGroup, 3)
     DEFINE_CHECKER_GETTER(SplitMessageGroup, 4)
-    DEFINE_CHECKER_GETTER(EmitHeartbeat, 5)
 
     #undef DEFINE_CHECKER_GETTER
 

@@ -44,7 +44,7 @@ public:
             if (indexDesc.GetType() == NKikimrSchemeOp::EIndexType::EIndexTypeGlobalAsync) {
                 auto indexPathId = TPathId(indexDesc.GetPathOwnerId(), indexDesc.GetLocalPathId());
                 AddSender.Reset(new TEvChangeExchange::TEvAddSender(
-                    pathId, indexPathId, TEvChangeExchange::TAsyncIndexSender{}
+                    pathId, TEvChangeExchange::ESenderType::AsyncIndex, indexPathId
                 ));
             }
 

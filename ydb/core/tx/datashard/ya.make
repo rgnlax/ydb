@@ -47,7 +47,6 @@ SRCS(
     build_index/recompute_kmeans.cpp
     build_index/reshuffle_kmeans.cpp
     build_index/secondary_index.cpp
-    cdc_aggregated_heartbeats.cpp
     cdc_stream_heartbeat.cpp
     cdc_stream_scan.cpp
     change_collector_cdc_stream.cpp
@@ -488,7 +487,6 @@ PEERDIR(
     ydb/core/split
     ydb/core/tablet
     ydb/core/tablet_flat
-    ydb/core/tx/cdc_aggregator/public
     ydb/core/tx/datashard/hnsw_index
     ydb/core/tx/datashard/snapshot_retention
     ydb/core/tx/locks

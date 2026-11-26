@@ -2342,26 +2342,6 @@ void TPersQueue::HandleSplitMessageGroupRequest(ui64 responseCookie, NWilson::TT
     ctx.Send(partActor, new TEvPQ::TEvSplitMessageGroup(responseCookie, std::move(deregistrations), std::move(registrations)), 0, 0, std::move(traceId));
 }
 
-void TPersQueue::HandleEmitHeartbeatRequest(ui64 responseCookie, NWilson::TTraceId traceId, const TActorId& partActor,
-    const NKikimrClient::TPersQueuePartitionRequest& req, const TActorContext& ctx)
-{
-    PQ_ENSURE(req.HasCmdEmitHeartbeat());
-    const auto& cmd = req.GetCmdEmitHeartbeat();
-
-    if (!cmd.HasHeartbeat()) {
-        return ReplyError(ctx, responseCookie, NPersQueue::NErrorCode::BAD_REQUEST, "no Heartbeat");
-    }
-    if (cmd.GetHeartbeat().GetData().empty()) {
-        return ReplyError(ctx, responseCookie, NPersQueue::NErrorCode::BAD_REQUEST, "empty Heartbeat");
-    }
-    if (cmd.GetHeartbeat().GetData().size() > MAX_HEARTBEAT_SIZE) {
-        return ReplyError(ctx, responseCookie, NPersQueue::NErrorCode::BAD_REQUEST, "Too big Heartbeat");
-    }
-
-    InitResponseBuilder(responseCookie, 1, COUNTER_LATENCY_PQ_WRITE);
-    ctx.Send(partActor, new TEvPQ::TEvEmitHeartbeat(responseCookie, THeartbeat::Parse(cmd.GetHeartbeat())), 0, 0, std::move(traceId));
-}
-
 const TPartitionInfo& TPersQueue::GetPartitionInfo(const NKikimrClient::TPersQueuePartitionRequest& req) const
 {
     PQ_ENSURE(req.HasWriteId());
@@ -2691,8 +2671,7 @@ void TPersQueue::Handle(TEvPersQueue::TEvRequest::TPtr& ev, const TActorContext&
         + req.HasCmdPublishRead()
         + req.HasCmdForgetRead()
         + req.HasCmdUpdateReadMetrics()
-        + req.HasCmdAbortDeferredStaging()
-        + req.HasCmdEmitHeartbeat();
+        + req.HasCmdAbortDeferredStaging();
 
     if (count != 1) {
         ReplyError(ctx, responseCookie, NPersQueue::NErrorCode::BAD_REQUEST,
@@ -2716,7 +2695,7 @@ void TPersQueue::Handle(TEvPersQueue::TEvRequest::TPtr& ev, const TActorContext&
     }
 
     if (IsTopicMutateDisabled(ctx)
-        && (req.CmdWriteSize() > 0 || req.HasCmdEmitHeartbeat()))
+        && req.CmdWriteSize() > 0)
     {
         ReplyError(ctx, responseCookie, NPersQueue::NErrorCode::ERROR,
                    "Topic mutations are temporarily disabled");
@@ -2780,8 +2759,6 @@ void TPersQueue::Handle(TEvPersQueue::TEvRequest::TPtr& ev, const TActorContext&
         HandleSplitMessageGroupRequest(responseCookie, NWilson::TTraceId(ev->TraceId), partActor, req, ctx);
     } else if (req.HasCmdUpdateReadMetrics()) {
         HandleUpdateReadMetricsRequest(responseCookie, NWilson::TTraceId(ev->TraceId), partActor, req, ctx);
-    } else if (req.HasCmdEmitHeartbeat()) {
-        HandleEmitHeartbeatRequest(responseCookie, NWilson::TTraceId(ev->TraceId), partActor, req, ctx);
     } else {
         PQ_LOG_ERROR_AND_DIE("unknown or empty command");
         return;
