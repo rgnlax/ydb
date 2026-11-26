@@ -1,0 +1,71 @@
+# Модуль CdcStream: описание для будущей кодогенерации (предложение, сборкой не используется)
+#
+# Сейчас то же самое написано руками в cdc_stream/features/<имя>/<имя>.cpp:
+# GetName, GetTitle, IsRequestedBy (when), GetDecisions (decides), GetOverrides.
+# Генератор по этому файлу мог бы создать эти методы, регистрацию фич и таблицу
+# полей потока; руками остаются только функции из hooks.
+
+stream:
+  storage:
+    table: CdcStream                # Table<95>
+    alter_table: CdcStreamAlterData # Table<96>, те же колонки
+  fields:                           # column — номер в таблицах 95/96, proto — номер в TCdcStreamDescription
+    - {name: State,              type: ECdcStreamState,         column: 4,  proto: 4,  default: Invalid}
+    - {name: Mode,               type: ECdcStreamMode,          column: 5,  proto: 2,  default: Invalid}
+    - {name: Format,             type: ECdcStreamFormat,        column: 6,  proto: 6,  default: Invalid}
+    - {name: VirtualTimestamps,  type: bool,                    column: 7,  proto: 7,  default: false}
+    - {name: AwsRegion,          type: string,                  column: 8,  proto: 9}
+    - {name: ResolvedTimestamps, type: duration_ms,             column: 9,  proto: 10, default: 0}
+    - {name: SchemaChanges,      type: bool,                    column: 10, proto: 12, default: false}
+    - {name: UserSIDs,           type: bool,                    column: 11, proto: 13, default: false}
+    - {name: TraceIds,           type: bool,                    column: 12, proto: 14, default: false}
+    - {name: Compression,        type: ECdcStreamCompression,   column: 13, proto: 15, default: None}
+    - {name: CompressionLevel,   type: i32,                     column: 14, proto: 16, default: 0}
+    - {name: HeartbeatMode,      type: ECdcStreamHeartbeatMode, column: 15, proto: 17, default: Direct, decided_by: heartbeat_mode}
+
+axes:
+  # Ось — решение, которое для потока принимает ровно одна фича.
+  # Несколько включённых фич на одной оси: побеждает та, что перекрывает (overrides)
+  # всех остальных. Если такой нет — запрос отклоняется с названиями двух фич.
+  heartbeat_mode: {default: Direct, stored_in: HeartbeatMode}
+  topic_shape:    {default: "партиция на шард таблицы"}
+
+hooks:                              # что пишет фича руками
+  MakeTopicShape:     {when_called: "DoCreatePqPart, фича победила на оси topic_shape", returns: TCdcPqPartParams}
+  MakeSourceKeyRange: {when_called: "ConfigureParts PQ, фича решила heartbeat_mode потока", returns: TPartitionKeyRange, per: DataShard}
+
+features:
+  key_range:
+    title: key range heartbeats
+    when: "flag EnableCdcKeyRangeHeartbeats && stream.resolved_timestamps > 0 && replication supports_key_range_autopartitioning"
+    decides: {heartbeat_mode: KeyRange, topic_shape: true}
+    overrides: [replication_autopartitioning]
+    hooks: [MakeTopicShape, MakeSourceKeyRange]
+
+  replication_autopartitioning:
+    title: replication topic autopartitioning
+    when: "replication supports_topic_autopartitioning"
+    decides: {topic_shape: true}
+    overrides: [topic_autopartitioning, topic_partitions]
+    hooks: [MakeTopicShape]
+
+  topic_autopartitioning:
+    title: TopicAutoPartitioning
+    when: "request.topic_auto_partitioning"
+    decides: {topic_shape: true}
+    overrides: [topic_partitions]
+    hooks: [MakeTopicShape]
+
+  topic_partitions:
+    title: TopicPartitions
+    when: "request.has_topic_partitions"
+    decides: {topic_shape: true}
+    hooks: [MakeTopicShape]
+
+# Что получается на сегодняшних запросах:
+#   key_range + replication_autopartitioning      -> key_range (перекрывает)
+#   key_range + topic_partitions                  -> отказ: "key range heartbeats and TopicPartitions cannot be used together"
+#   key_range + topic_autopartitioning            -> отказ
+#   replication_autopartitioning + topic_partitions -> replication (TopicPartitions становится минимумом)
+#   topic_autopartitioning + topic_partitions     -> topic_autopartitioning (TopicPartitions — минимум)
+#   ничего                                        -> heartbeat Direct, партиция на шард
